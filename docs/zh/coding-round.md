@@ -16,6 +16,13 @@
 
 给定一个字符串，将其原地反转。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Given a string, reverse it in place.
+
 ### 面试官常看点
 
 - 是否能写出双指针
@@ -70,6 +77,13 @@ int main() {
 ### 题目描述
 
 判断一个字符串是否为回文串。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Determine whether a string is a palindrome.
 
 ### 面试官常看点
 
@@ -128,6 +142,13 @@ int main() {
 
 给定单链表头节点，返回反转后的头节点。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Given the head node of a singly linked list, return the reversed head node.
+
 ### 面试官常看点
 
 - 指针操作是否清晰
@@ -184,6 +205,13 @@ ListNode* reverseList(ListNode* head) {
 
 返回单链表的中间节点。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Returns the middle node of a singly linked list.
+
 ### 面试官常看点
 
 - 是否能想到快慢指针
@@ -233,6 +261,13 @@ ListNode* middleNode(ListNode* head) {
 ### 题目描述
 
 输入两个递增链表，合并成一个递增链表并返回头节点。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Input two increasing linked lists, merge them into one increasing linked list and return the head node.
 
 ### 面试官常看点
 
@@ -291,6 +326,13 @@ ListNode* mergeTwoLists(ListNode* l1, ListNode* l2) {
 ### 题目描述
 
 设计一个支持 `get` 和 `put` 的 LRU，要求平均 O(1)。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Design an LRU that supports `get` and `put`, requiring average O(1).
 
 ### 面试官常看点
 
@@ -413,6 +455,13 @@ private:
 
 使用两个栈实现先进先出的队列。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Use two stacks to implement a first-in-first-out queue.
+
 ### 面试官常看点
 
 - 是否理解摊还复杂度
@@ -488,6 +537,13 @@ private:
 ### 题目描述
 
 设计一个栈，支持 `push`、`pop`、`top` 和 `getMin`，都要求 O(1)。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Design a stack that supports `push`, `pop`, `top` and `getMin`, all requiring O(1).
 
 ### 面试官常看点
 
@@ -565,6 +621,13 @@ private:
 
 设计一个多线程可用的队列，支持生产者和消费者并发访问。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Design a multi-threaded queue to support concurrent access by producers and consumers.
+
 ### 面试官常看点
 
 - 是否知道 `mutex + condition_variable`
@@ -640,6 +703,13 @@ private:
 ### 题目描述
 
 如果让你实现一个简单线程池，你会怎么设计任务队列？
+
+
+### English explanation
+
+In an English interview, I would say:
+
+If you were asked to implement a simple thread pool, how would you design the task queue?
 
 ### 面试官常看点
 

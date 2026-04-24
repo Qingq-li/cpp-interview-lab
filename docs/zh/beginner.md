@@ -12,6 +12,15 @@
 - 引用是对象别名，初始化后不能重新绑定
 - 指针需要显式解引用，引用在语法上更接近原对象
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- A pointer is a variable that holds an address. It can be empty or can be changed to point to
+- The reference is an object alias and cannot be rebound after initialization.
+- The pointer needs to be explicitly dereferenced, and the reference is syntactically closer to the original object
+
 ### 错误回答示例
 
 - “引用就是受限指针，所以它们本质完全一样”
@@ -68,6 +77,13 @@ int main() {
 ### 核心答案
 
 `const` 用来表达不可修改，常见于变量、指针、引用参数和成员函数。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+`const` is used to express that it cannot be modified. It is commonly used in variables, pointers, reference parameters and member functions.
 
 ### 错误回答示例
 
@@ -135,6 +151,15 @@ int main() {
 - 堆对象需要动态分配，生命周期更灵活
 - 现代 C++ 中堆对象通常应交给智能指针管理，而不是手写 `new/delete`
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- Stack objects are usually automatically managed by the scope and automatically destroyed when exiting the scope.
+- Heap objects need to be dynamically allocated and the life cycle is more flexible
+- Heap objects in modern C++ should usually be managed by smart pointers instead of hand-written `new/delete`
+
 ### 错误回答示例
 
 - “栈一定快，堆一定慢”
@@ -186,6 +211,13 @@ int main() {
 
 RAII 是把资源获取和对象生命周期绑定起来，对象构造时获取资源，对象析构时自动释放资源。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+RAII binds resource acquisition to the object life cycle. Resources are acquired when the object is constructed and automatically released when the object is destructed.
+
 ### 错误回答示例
 
 - “RAII 就是智能指针”
@@ -234,6 +266,14 @@ int main() {
 
 - 构造函数负责初始化对象状态
 - 析构函数负责清理对象占用的资源
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- The constructor is responsible for initializing the object state
+- The destructor is responsible for cleaning up the resources occupied by the object
 
 ### 错误回答示例
 
@@ -292,6 +332,13 @@ int main() {
 
 语法层面的关键差别是默认访问权限和默认继承方式不同。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+The key difference at the syntax level is the default access permissions and default inheritance methods.
+
 ### 错误回答示例
 
 - “`struct` 不能有函数”
@@ -347,6 +394,15 @@ private:
 - 重载：同一作用域内同名函数参数不同
 - 重写：派生类覆盖基类虚函数
 - 隐藏：派生类同名函数遮蔽基类同名函数集合
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- Overloading: Functions with the same name in the same scope have different parameters
+- Rewriting: Derived class overrides base class virtual function
+- Hidden: Functions with the same name in the derived class obscure the set of functions with the same name in the base class
 
 ### 错误回答示例
 
@@ -415,6 +471,15 @@ Note
 - 引用传递可以修改原对象
 - `const T&` 避免拷贝并保证只读
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- Passing by value copies parameters
+- Passing by reference can modify the original object
+- `const T&` avoids copying and guarantees read-only
+
 ### 错误回答示例
 
 - “所有参数都应该用引用，效率最高”
@@ -476,6 +541,13 @@ Note:
 
 拷贝构造函数在新对象初始化时，用已有对象构造它。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+The copy constructor constructs a new object from an existing object when it is initialized.
+
 ### 错误回答示例
 
 - “`a = b` 就一定是拷贝构造”
@@ -534,6 +606,13 @@ int main() {
 ### 核心答案
 
 多态是通过统一接口表现不同实现。C++ 面试里通常指虚函数实现的运行时多态。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Polymorphism represents different implementations through a unified interface. C++ interviews usually refer to runtime polymorphism implemented by virtual functions.
 
 ### 错误回答示例
 
@@ -600,6 +679,14 @@ int main() {
 
 - 虚函数可以提供默认实现
 - 纯虚函数要求派生类提供实现，并使类成为抽象类
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- Virtual functions can provide default implementations
+- Pure virtual functions require derived classes to provide implementation and make the class an abstract class
 
 ### 错误回答示例
 
@@ -669,6 +756,15 @@ Note:
 - `std::vector` 大小可动态变化
 - 两者都支持 STL 风格接口，但使用场景不同
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- `std::array` has fixed size
+- `std::vector` size can be changed dynamically
+- Both support STL style interface, but the usage scenarios are different
+
 ### 错误回答示例
 
 - “`array` 在栈上，`vector` 在堆上，所以前者一定更好”
@@ -722,6 +818,13 @@ int main() {
 ### 核心答案
 
 因为它连续存储、缓存友好、随机访问快，而且和 STL 算法协作得最好。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Because it stores continuously, is cache-friendly, has fast random access, and works best with the STL algorithm.
 
 ### 错误回答示例
 
@@ -777,6 +880,13 @@ int main() {
 
 迭代器是对容器访问方式的统一抽象，让算法能独立于具体容器工作。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Iterators are a unified abstraction of container access methods, allowing algorithms to work independently of specific containers.
+
 ### 错误回答示例
 
 - “迭代器就是指针”
@@ -829,6 +939,13 @@ int main() {
 
 因为裸 `new/delete` 容易导致资源泄漏、异常路径遗漏和所有权不清晰，现代 C++ 更强调用类型表达资源管理。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Because bare `new/delete` can easily lead to resource leaks, missing exception paths, and unclear ownership, modern C++ relies more heavily on call types to express resource management.
+
 ### 错误回答示例
 
 - “因为写起来麻烦”
@@ -878,6 +995,15 @@ int main() {
 - `std::unique_ptr`：独占所有权，一个对象同一时刻只有一个拥有者
 - `std::shared_ptr`：共享所有权，多个对象可共同拥有同一资源
 - `std::weak_ptr`：弱引用，不拥有对象，只用于观察 `shared_ptr` 管理的对象
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- `std::unique_ptr`: exclusive ownership, an object has only one owner at a time
+- `std::shared_ptr`: shared ownership, multiple objects can jointly own the same resource
+- `std::weak_ptr`: Weak reference, does not own the object, only used to observe objects managed by `shared_ptr`
 
 ### 错误回答示例
 
@@ -942,6 +1068,14 @@ int main() {
 - `unique_ptr` 表达独占所有权，不能随意拷贝，只能移动
 - `shared_ptr` 表达共享所有权，可以拷贝，内部通过引用计数管理生命周期
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- `unique_ptr` expresses exclusive ownership and cannot be copied at will, but can only be moved
+- `shared_ptr` expresses shared ownership, can be copied, and internally manages the life cycle through reference counting
+
 ### 错误回答示例
 
 - “两者只是 API 长得不一样”
@@ -994,6 +1128,13 @@ int main() {
 ### 核心答案
 
 `std::list` 是双向链表容器，支持在已知位置 O(1) 插入和删除，但不支持随机访问。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+`std::list` is a doubly linked list container that supports O(1) insertions and deletions at known positions, but does not support random access.
 
 ### 错误回答示例
 
@@ -1053,6 +1194,14 @@ int main() {
 - `std::vector` 擅长尾部插入和随机访问，元素连续存储
 - `std::deque` 支持头尾高效插入删除，也支持随机访问，但通常不是整体连续内存
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- `std::vector` is good at tail insertion and random access, and elements are stored continuously
+- `std::deque` supports efficient head-to-tail insertion and deletion, and also supports random access, but it is usually not the entire continuous memory.
+
 ### 错误回答示例
 
 - “`deque` 就是双向链表”
@@ -1106,6 +1255,14 @@ int main() {
 - `std::map` 的键有序，通常基于平衡树实现
 - `std::unordered_map` 的键无序，通常基于哈希表实现
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- The keys of `std::map` are ordered, usually based on balanced tree implementation
+- The keys of `std::unordered_map` are unordered and are usually implemented based on hash tables
+
 ### 错误回答示例
 
 - “`unordered_map` 一定比 `map` 快”
@@ -1158,6 +1315,19 @@ int main() {
 ### 核心答案
 
 STL 提供了大量通用算法，比如：
+
+- `std::sort`
+- `std::find`
+- `std::count`
+- `std::for_each`
+- `std::binary_search`
+
+
+### English explanation
+
+In an English interview, I would say:
+
+STL provides a large number of general algorithms, such as:
 
 - `std::sort`
 - `std::find`
@@ -1221,6 +1391,15 @@ int main() {
 - 需要双端高效插入删除时考虑 `deque`
 - 需要稳定迭代器、已知位置高效插删且不需要随机访问时考虑 `list`
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- Default priority is `vector`
+- Consider `deque` when you need double-ended efficient insertion and deletion.
+- Consider `list` when you need stable iterators, efficient insertion and deletion at known positions, and no random access.
+
 ### 错误回答示例
 
 - “链表插入复杂度低，所以应该优先 `list`”
@@ -1281,6 +1460,19 @@ int main() {
 - 析构函数
 - 访问控制符，如 `public`、`private`、`protected`
 
+
+### English explanation
+
+In an English interview, I would say:
+
+A class usually contains:
+
+- member variables
+- Member functions
+-Constructor
+- destructor
+- Access control characters, such as `public`, `private`, `protected`
+
 ### 错误回答示例
 
 - “类就是把几个函数放一起”
@@ -1339,6 +1531,15 @@ private:
 - `private`：仅类内部可访问
 - `protected`：类内部和派生类可访问
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- `public`: open to the outside world and accessible outside the class
+- `private`: only accessible within the class
+- `protected`: accessible within the class and derived classes
+
 ### 错误回答示例
 
 - “`protected` 就是半公开”
@@ -1390,6 +1591,13 @@ private:
 ### 核心答案
 
 封装就是把对象内部实现细节隐藏起来，只暴露必要接口，保证对象状态始终合法。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Encapsulation is to hide the internal implementation details of an object and expose only the necessary interfaces to ensure that the object state is always legal.
 
 ### 错误回答示例
 
@@ -1451,6 +1659,13 @@ private:
 
 继承表示“派生类拥有基类的接口和部分实现”，常用于表达 is-a 关系。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Inheritance means "the derived class has the interface and partial implementation of the base class" and is often used to express the is-a relationship.
+
 ### 错误回答示例
 
 - “有重复代码就应该继承”
@@ -1508,6 +1723,13 @@ public:
 
 模板允许你写一份通用代码，让它适用于多种类型，编译器会在编译期生成对应实例。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Templates allow you to write a common code, make it applicable to multiple types, and the compiler will generate corresponding instances at compile time.
+
 ### 错误回答示例
 
 - “模板就是宏的升级版”
@@ -1563,6 +1785,15 @@ int main() {
 - 函数重载是多个同名函数通过不同参数列表区分
 - 两者都能实现“同名处理不同类型”，但机制不同
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- Function templates are used to write general functions using type parameters
+- Function overloading is when multiple functions with the same name are distinguished by different parameter lists
+- Both can implement "processing different types with the same name", but the mechanisms are different
+
 ### 错误回答示例
 
 - “函数模板就是自动生成所有重载”
@@ -1614,6 +1845,13 @@ void printValue(const char* value) {
 ### 核心答案
 
 类模板是“把整个类的类型参数化”，可以让同一个类定义服务于不同数据类型。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Class templates "parameterize the type of the entire class", allowing the same class definition to serve different data types.
 
 ### 错误回答示例
 
@@ -1678,6 +1916,13 @@ int main() {
 
 因为 STL 容器、迭代器、算法和很多工具都依赖模板，才能在不同类型之间复用同一套接口和实现思想。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Because STL containers, iterators, algorithms, and many tools rely on templates, the same set of interfaces and implementation ideas can be reused between different types.
+
 ### 错误回答示例
 
 - “STL 只是一些现成数据结构，和模板没关系”
@@ -1736,6 +1981,16 @@ int main() {
 - 同一进程内的线程共享地址空间和大部分资源
 - 不同进程之间资源隔离更强
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- Process is the basic unit of resource allocation
+- Thread is the basic unit of CPU scheduling
+- Threads within the same process share address space and most resources
+- Stronger resource isolation between different processes
+
 ### 错误回答示例
 
 - “线程就是轻量级进程，所以完全一样”
@@ -1776,6 +2031,13 @@ int main() {
 ### 核心答案
 
 C++11 起可以使用 `std::thread` 创建线程，让函数或可调用对象在新线程中运行。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Starting from C++11, you can use `std::thread` to create a thread and let a function or callable object run in a new thread.
 
 ### 错误回答示例
 
@@ -1830,6 +2092,14 @@ int main() {
 - `join()` 表示等待线程执行结束
 - `detach()` 表示让线程独立运行，和当前 `std::thread` 对象脱离关系
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- `join()` means waiting for the thread execution to end
+- `detach()` means to let the thread run independently and be disconnected from the current `std::thread` object
+
 ### 错误回答示例
 
 - “`detach()` 就是更高级的 `join()`”
@@ -1878,6 +2148,13 @@ int main() {
 ### 核心答案
 
 因为多个线程同时访问同一份可变数据时，如果没有同步机制，就可能出现竞态条件，导致结果不确定。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Because when multiple threads access the same variable data at the same time, if there is no synchronization mechanism, race conditions may occur, resulting in uncertain results.
 
 ### 错误回答示例
 
@@ -1940,6 +2217,13 @@ int main() {
 
 `std::mutex` 是最基础的线程同步工具，用来保证同一时刻只有一个线程进入临界区。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+`std::mutex` is the most basic thread synchronization tool, used to ensure that only one thread enters the critical section at the same time.
+
 ### 错误回答示例
 
 - “加了锁就不会有任何并发问题”
@@ -1994,6 +2278,13 @@ void add() {
 ### 核心答案
 
 `std::lock_guard` 是基于 RAII 的加锁工具，创建时加锁，离开作用域时自动解锁。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+`std::lock_guard` is a locking tool based on RAII. It is locked when created and automatically unlocked when it leaves the scope.
 
 ### 错误回答示例
 
@@ -2076,6 +2367,13 @@ int main() {
 
 条件变量用于在线程之间协调“等待某个条件成立”，常用于生产者消费者模型。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Condition variables are used to coordinate "waiting for a certain condition to be true" between threads and are often used in the producer-consumer model.
+
 ### 错误回答示例
 
 - “条件变量就是高级版 mutex”
@@ -2123,6 +2421,13 @@ bool ready = false;
 ### 核心答案
 
 线程池是预先创建一组工作线程，统一从任务队列中取任务执行的机制。它的目标是复用线程，减少频繁创建和销毁线程的成本。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+The thread pool is a mechanism that creates a group of worker threads in advance and uniformly takes tasks from the task queue for execution. Its goal is to reuse threads and reduce the cost of frequently creating and destroying threads.
 
 ### 错误回答示例
 
@@ -2248,6 +2553,19 @@ int main() {
 - 条件变量
 - 停止标志
 
+
+### English explanation
+
+In an English interview, I would say:
+
+A basic thread pool usually includes:
+
+- Collection of worker threads
+- Task queue
+- Mutex lock
+- condition variables
+- Stop sign
+
 ### 错误回答示例
 
 - “线程池只需要开几个线程就够了”
@@ -2353,6 +2671,13 @@ private:
 
 lambda 是一种匿名可调用对象，适合在使用点附近写短小逻辑，常用于算法、回调和线程任务。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Lambda is an anonymous callable object suitable for writing short logic near the point of use. It is often used in algorithms, callbacks and thread tasks.
+
 ### 错误回答示例
 
 - “lambda 就是语法更短的普通函数”
@@ -2412,6 +2737,13 @@ int main() {
 
 `std::function` 是一个通用可调用对象包装器，可以统一保存函数、lambda、函数对象等可调用目标。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+`std::function` is a general callable object wrapper that can uniformly save callable targets such as functions, lambdas, and function objects.
+
 ### 错误回答示例
 
 - “`std::function` 就是函数指针”
@@ -2467,6 +2799,15 @@ int main() {
 - `nullptr` 是 C++11 引入的空指针字面量，类型更安全
 - `NULL` 通常只是一个宏，很多实现里本质上是 `0`
 - 在现代 C++ 中应优先使用 `nullptr`
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- `nullptr` is a null pointer literal introduced in C++11, which is more type safe
+- `NULL` is usually just a macro, essentially `0` in many implementations
+- Prefer `nullptr` in modern C++
 
 ### 错误回答示例
 
@@ -2534,6 +2875,18 @@ int main() {
 - 修饰成员函数，表示不依赖对象实例
 - 在文件作用域限制符号可见范围
 
+
+### English explanation
+
+In an English interview, I would say:
+
+`static` has several common uses in C++:
+
+- Modify local variables to extend life cycle
+- Modify class members to indicate that they belong to the class itself rather than to an object
+- Modify member functions to indicate that they do not depend on object instances
+- Limit symbol visibility in file scope
+
 ### 错误回答示例
 
 - “`static` 就是全局变量”
@@ -2599,6 +2952,13 @@ int main() {
 
 `inline` 最早用于提示内联展开，但在现代 C++ 里更重要的作用是允许函数或变量在多个翻译单元中有相同定义而不违反 ODR。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+`inline` was originally used to prompt inline expansion, but its more important role in modern C++ is to allow functions or variables to have the same definition in multiple translation units without violating ODR.
+
 ### 错误回答示例
 
 - “加了 `inline` 编译器就一定会内联”
@@ -2646,6 +3006,13 @@ int main() {
 ### 核心答案
 
 `this` 是成员函数中的一个隐藏指针，指向调用该成员函数的当前对象。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+`this` is a hidden pointer in a member function that points to the current object on which the member function is called.
 
 ### 错误回答示例
 
@@ -2699,6 +3066,13 @@ private:
 ### 核心答案
 
 `enum class` 是强类型枚举，比传统 `enum` 更安全，避免枚举值污染外层作用域，也避免隐式转换成整数。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+`enum class` is a strongly typed enumeration, which is safer than traditional `enum`. It prevents enumeration values ​​from polluting the outer scope and avoids implicit conversion to integers.
 
 ### 错误回答示例
 
@@ -2755,6 +3129,13 @@ int main() {
 ### 核心答案
 
 `friend` 用于授权某个函数或类访问当前类的私有和受保护成员。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+`friend` is used to authorize a function or class to access private and protected members of the current class.
 
 ### 错误回答示例
 
@@ -2817,6 +3198,16 @@ std::ostream& operator<<(std::ostream& os, const Point& p) {
 - 声明告诉编译器“这个名字存在”
 - 定义真正分配实体或给出实现
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- Header files usually contain declarations, type definitions, templates, inline functions, etc. that are shared by multiple source files.
+- Source files usually contain specific implementations
+- The declaration tells the compiler "this name exists"
+- Define the real allocation entity or give the implementation
+
 ### 错误回答示例
 
 - “声明和定义是一回事”
@@ -2864,6 +3255,13 @@ int add(int a, int b) { // 定义
 ### 核心答案
 
 它们都用于防止头文件被重复包含。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+They are both used to prevent header files from being included twice.
 
 ### 错误回答示例
 
@@ -2917,6 +3315,15 @@ public:
 - `std::set` 元素有序，通常基于平衡树
 - `std::unordered_set` 元素无序，通常基于哈希表
 - 两者都用于存不重复元素
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- `std::set` elements are ordered, usually based on a balanced tree
+- `std::unordered_set` elements are unordered, usually based on a hash table
+- Both are used to store unique elements
 
 ### 错误回答示例
 
@@ -2972,6 +3379,15 @@ int main() {
 - `queue`：先进先出（FIFO）
 - `stack`：后进先出（LIFO）
 - `priority_queue`：按优先级取出元素，默认最大堆
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- `queue`: first in first out (FIFO)
+- `stack`: last in first out (LIFO)
+- `priority_queue`: take out elements according to priority, default maximum heap
 
 ### 错误回答示例
 
@@ -3039,6 +3455,15 @@ int main() {
 - `using` 是更现代、更清晰的写法
 - 在模板别名场景中，`using` 更强大
 
+
+### English explanation
+
+In an English interview, I would say:
+
+-Both can define type aliases
+- `using` is a more modern and clear way of writing
+- `using` is more powerful in template alias scenarios
+
 ### 错误回答示例
 
 - “`using` 只是语法糖，完全没必要学”
@@ -3089,6 +3514,16 @@ int main() {
 - `dynamic_cast`：主要用于继承体系中的安全向下转型
 - `const_cast`：添加或移除 `const` / `volatile`
 - `reinterpret_cast`：按底层比特模式重新解释类型，最危险
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- `static_cast`: the most common explicit type conversion
+- `dynamic_cast`: mainly used for safe downward transformation in inheritance system
+- `const_cast`: add or remove `const` / `volatile`
+- `reinterpret_cast`: Reinterpret the type according to the underlying bit pattern, the most dangerous
 
 ### 错误回答示例
 
@@ -3158,6 +3593,13 @@ int main() {
 
 `volatile` 用于告诉编译器，这个对象的值可能在程序正常控制流之外发生变化，因此不要随意优化掉相关读写。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+`volatile` is used to tell the compiler that the value of this object may change outside the normal control flow of the program, so do not optimize out related reads and writes at will.
+
 ### 错误回答示例
 
 - “`volatile` 就是轻量版原子变量”
@@ -3203,6 +3645,13 @@ int main() {
 ### 核心答案
 
 `sizeof` 用于获取类型或对象所占字节数，结果类型通常是 `size_t`。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+`sizeof` is used to get the number of bytes occupied by a type or object. The result type is usually `size_t`.
 
 ### 错误回答示例
 
@@ -3252,6 +3701,13 @@ int main() {
 ### 核心答案
 
 `union` 允许多个成员共享同一块内存，同一时刻通常只应把它当成其中一个成员来使用。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+`union` allows multiple members to share the same memory. It should usually only be used as one of the members at the same time.
 
 ### 错误回答示例
 
@@ -3307,6 +3763,15 @@ int main() {
 - C 风格数组是固定大小的连续内存块
 - C 风格字符串本质上是以 `'\0'` 结尾的字符数组
 - 在现代 C++ 中，通常更推荐 `std::array`、`std::vector`、`std::string`
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- C-style arrays are fixed-size contiguous blocks of memory
+- C-style strings are essentially arrays of characters terminated by `'\0'`
+- In modern C++, `std::array`, `std::vector`, `std::string` are generally preferred
 
 ### 错误回答示例
 

@@ -16,6 +16,9 @@
 - [高级篇](./advanced.md)
 - [手写代码题](./coding-round.md)
 - [C++17 / C++20 高频特性](./modern-cpp.md)
+- [STL 容器速查表](./stl-container-cheatsheet.md)
+- [并发专题](./concurrency-deep-dive.md)
+- [项目回答模板](./project-answer-templates.md)
 
 ## 建议使用方式
 
@@ -62,7 +65,5 @@
 
 ## 后续可以继续扩展的方向
 
-- 并发与锁专题
-- STL 容器和迭代器失效专题
-- 项目经验表达模板
 - 调试与性能分析专题
+- 系统设计专题

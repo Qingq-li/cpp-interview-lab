@@ -12,6 +12,15 @@
 - Rule of Five：现代 C++ 还要加上移动构造和移动赋值
 - Rule of Zero：优先把资源管理交给标准库类型，自己不手写特殊成员
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- Rule of Three: One of handwritten destruction, copy construction, and copy assignment, usually the other two must be considered
+- Rule of Five: Modern C++ also adds move construction and move assignment
+- Rule of Zero: Give priority to resource management to standard library types, and do not write special members by hand.
+
 ### 错误回答示例
 
 - “Rule of Five 就是比 Rule of Three 多两个函数，需要全写”
@@ -64,6 +73,15 @@ private:
 - 右值通常是临时值
 - 将亡值是即将被移动资源的对象表达式
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- The lvalue has an identity and an address that can be taken
+- rvalues are usually temporary values
+- The dying value is the object expression of the resource that is about to be moved.
+
 ### 错误回答示例
 
 - “右值就是常量”
@@ -112,6 +130,13 @@ int main() {
 ### 核心答案
 
 移动语义允许对象把内部资源转移给另一个对象，而不是复制整份资源。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Move semantics allow an object to transfer internal resources to another object rather than copying the entire resource.
 
 ### 错误回答示例
 
@@ -164,6 +189,14 @@ int main() {
 
 - 拷贝构造发生在新对象初始化阶段
 - 拷贝赋值发生在对象已存在时
+
+
+### English explanation
+
+In an English interview, I would say:
+
+-Copy construction occurs during the initialization phase of the new object
+- Copy assignment occurs when the object already exists
 
 ### 错误回答示例
 
@@ -229,6 +262,14 @@ int main() {
 
 - 浅拷贝只复制地址或句柄
 - 深拷贝复制底层资源本身
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- Shallow copy only copies the address or handle
+- Deep copy copies the underlying resource itself
 
 ### 错误回答示例
 
@@ -302,6 +343,15 @@ private:
 - `shared_ptr` 表达共享所有权
 - `weak_ptr` 表达非拥有观察者
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- `unique_ptr` expresses exclusive ownership
+- `shared_ptr` expresses shared ownership
+- `weak_ptr` expresses a non-owning observer
+
 ### 错误回答示例
 
 - “`shared_ptr` 比 `unique_ptr` 更高级，所以默认用它”
@@ -355,6 +405,13 @@ public:
 ### 核心答案
 
 它们更安全、更简洁，也能减少直接写 `new` 带来的异常路径问题。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+They are safer, more concise, and can reduce the abnormal path problems caused by writing `new` directly.
 
 ### 错误回答示例
 
@@ -413,6 +470,13 @@ int main() {
 ### 核心答案
 
 模板让你写类型无关的泛型代码，并在编译期生成具体实例。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Templates let you write type-independent generic code and generate concrete instances at compile time.
 
 ### 错误回答示例
 
@@ -476,6 +540,15 @@ int main() {
 - `decltype` 从表达式推导类型
 - `using` 用于定义更可读的类型别名和模板别名
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- `auto` is used to simplify type writing
+- `decltype` deduces type from expression
+- `using` is used to define more readable type aliases and template aliases
+
 ### 错误回答示例
 
 - “`auto` 会让代码更动态”
@@ -537,6 +610,15 @@ int main() {
 - `override` 明确这是重写
 - `final` 禁止进一步重写或继承
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- `virtual` declares dynamic distribution points
+- `override` makes it clear that this is an override
+- `final` prohibits further overriding or inheritance
+
 ### 错误回答示例
 
 - “加不加 `override` 都一样”
@@ -596,6 +678,14 @@ public:
 
 - `push_back` 接收一个现成对象
 - `emplace_back` 直接在容器尾部构造对象
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- `push_back` receives a ready-made object
+- `emplace_back` constructs objects directly at the end of the container
 
 ### 错误回答示例
 
@@ -661,6 +751,17 @@ int main() {
 - 强保证：操作失败像没执行过一样
 - 不抛异常保证：承诺不抛异常
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Exception safety describes whether the program state is still acceptable after an exception occurs.
+
+- Basic guarantee: no leaks, objects are still valid
+- Strong guarantee: if the operation fails, it will be as if it has never been executed.
+- No exception guarantee: Promise not to throw exceptions
+
 ### 错误回答示例
 
 - “用了 try/catch 就叫异常安全”
@@ -691,6 +792,14 @@ int main() {
 
 - `map` 有序，通常基于平衡树
 - `unordered_map` 无序，通常基于哈希表
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- `map` is ordered, usually based on a balanced tree
+- `unordered_map` is unordered, usually based on a hash table
 
 ### 错误回答示例
 
@@ -753,6 +862,13 @@ int main() {
 ### 核心答案
 
 多个线程并发访问共享数据，且至少有一个线程写入，没有正确同步时，就可能发生竞态条件。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+When multiple threads access shared data concurrently and at least one thread writes, without proper synchronization, a race condition may occur.
 
 ### 错误回答示例
 
@@ -817,6 +933,13 @@ int main() {
 
 `constexpr` 允许值和函数在满足条件时参与编译期求值。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+`constexpr` allows values ​​and functions to participate in compile-time evaluation when conditions are met.
+
 ### 错误回答示例
 
 - “`constexpr` 就是比 `const` 更快”
@@ -867,6 +990,14 @@ int main() {
 
 - `reserve()` 调整容量，通常不改变当前元素个数
 - `resize()` 调整元素个数，可能新增或删除元素
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- `reserve()` adjusts the capacity, usually without changing the current number of elements
+- `resize()` adjusts the number of elements, possibly adding or deleting elements
 
 ### 错误回答示例
 
@@ -920,6 +1051,13 @@ int main() {
 
 迭代器失效是指容器修改后，原来的迭代器、引用或指针不再有效。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Iterator invalidation means that after the container is modified, the original iterator, reference or pointer is no longer valid.
+
 ### 错误回答示例
 
 - “拿到迭代器之后就能一直用”
@@ -970,6 +1108,13 @@ int main() {
 
 `noexcept` 用来声明一个函数不会抛出异常，这既影响接口语义，也可能影响标准库优化选择。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+`noexcept` is used to declare that a function will not throw exceptions, which affects both interface semantics and may also affect standard library optimization choices.
+
 ### 错误回答示例
 
 - “`noexcept` 只是文档注释”
@@ -1018,6 +1163,14 @@ int main() {}
 - `std::atomic` 适合简单原子读写和计数类共享状态
 - `std::mutex` 适合保护一段复合逻辑或多个变量的一致性
 
+
+### English explanation
+
+In an English interview, I would say:
+
+- `std::atomic` is suitable for simple atomic reading and writing and counting class shared state
+- `std::mutex` is suitable for protecting the consistency of a piece of complex logic or multiple variables
+
 ### 错误回答示例
 
 - “有了 `atomic` 就不需要锁了”
@@ -1065,6 +1218,14 @@ int main() {
 
 - `lock_guard` 更轻量，适合简单作用域加锁
 - `unique_lock` 更灵活，支持延迟加锁、手动解锁和条件变量配合
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- `lock_guard` is more lightweight and suitable for simple scope locking
+- `unique_lock` is more flexible and supports delayed locking, manual unlocking and condition variable cooperation
 
 ### 错误回答示例
 
@@ -1117,6 +1278,14 @@ int main() {
 
 - `std::async` 用于异步启动任务
 - `std::future` 用于稍后获取异步任务结果
+
+
+### English explanation
+
+In an English interview, I would say:
+
+- `std::async` is used to start tasks asynchronously
+- `std::future` is used to obtain asynchronous task results later
 
 ### 错误回答示例
 

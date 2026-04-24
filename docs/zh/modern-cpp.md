@@ -14,6 +14,13 @@
 
 表示“可能有值，也可能没有值”，避免用特殊值、裸指针或额外布尔变量表达缺失状态。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Represents "may or may not have a value" and avoids using special values, raw pointers, or extra Boolean variables to express missing states.
+
 ### 面试官想听什么
 
 - 你是否理解它表达的是可选值语义
@@ -60,6 +67,13 @@ int main() {
 
 在多个备选类型中安全地持有其中一个，替代 `union` 和弱类型分支。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Safely hold one of multiple alternative types, replacing `union` and weakly typed branches.
+
 ### 面试官想听什么
 
 - 你是否知道它是类型安全的代数和类型
@@ -99,6 +113,13 @@ int main() {
 ### 解决什么问题
 
 提供对字符串的只读非拥有视图，避免不必要拷贝。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Provides a read-only, non-owning view of strings to avoid unnecessary copies.
 
 ### 面试官想听什么
 
@@ -142,6 +163,13 @@ int main() {
 
 在模板代码中做编译期条件分支，让泛型代码更可读。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Make compile-time conditional branches in template code to make generic code more readable.
+
 ### 面试官想听什么
 
 - 你是否知道无效分支会在编译期丢弃
@@ -182,6 +210,13 @@ void printInfo(const T& value) {
 
 更方便地解构 pair、tuple、结构体，提高可读性。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Deconstruct pairs, tuples, and structures more conveniently to improve readability.
+
 ### 示例
 
 ```cpp
@@ -213,6 +248,13 @@ int main() {
 ### 解决什么问题
 
 简化可变参数模板的递归展开写法。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Simplify the recursive expansion of variable parameter templates.
 
 ### 示例
 
@@ -248,6 +290,13 @@ int main() {
 
 提供跨平台文件系统路径和文件操作接口，减少平台相关 API 依赖。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Provides cross-platform file system paths and file operation interfaces to reduce platform-related API dependencies.
+
 ### 示例
 
 ```cpp
@@ -278,6 +327,13 @@ int main() {
 ### 解决什么问题
 
 表示一段连续内存的非拥有视图，适合统一接收数组、`vector`、`array` 等连续数据。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+Represents a non-owned view of a continuous memory, suitable for uniformly receiving continuous data such as arrays, `vector`, and `array`.
 
 ### 面试官想听什么
 
@@ -322,6 +378,13 @@ int main() {
 
 给模板参数增加显式约束，让错误更清晰、接口更易读。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Add explicit constraints to template parameters to make errors clearer and interfaces more readable.
+
 ### 面试官想听什么
 
 - 你是否知道 concepts 是模板约束机制
@@ -362,6 +425,13 @@ int main() {
 
 让算法、视图和管道式组合更自然，减少中间容器和样板代码。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Make algorithm, view, and pipeline composition more natural, reducing intermediate containers and boilerplate code.
+
 ### 示例
 
 ```cpp
@@ -398,6 +468,13 @@ int main() {
 
 让更多函数和对象可以参与编译期求值，提升泛型表达力和编译期验证能力。
 
+
+### English explanation
+
+In an English interview, I would say:
+
+Allow more functions and objects to participate in compile-time evaluation, improving generic expression and compile-time verification capabilities.
+
 ### 示例
 
 ```cpp
@@ -429,6 +506,13 @@ static_assert(fib(5) == 5);
 ### 解决什么问题
 
 比 `std::thread` 更安全地管理线程生命周期，析构时会自动请求停止并 join。
+
+
+### English explanation
+
+In an English interview, I would say:
+
+It manages the thread life cycle more safely than `std::thread`, and will automatically request stop and join when destructed.
 
 ### 示例
 
