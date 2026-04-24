@@ -133,7 +133,8 @@ SECTION_HEADING_RE = re.compile(r"^###\s+(.+?)\s*$")
 NOTE_HEADING_RE = re.compile(r"^Note:?\s*$")
 FENCE_RE = re.compile(r"^```([A-Za-z0-9_+-]*)\s*$")
 LIST_ITEM_RE = re.compile(r"^\s*-\s+(.*)$")
-CODE_FENCE_CAPTURE_RE = re.compile(r"```([A-Za-z0-9_+-]*)\s*\n(.*?)\n```", re.S)
+CODE_FENCE_CAPTURE_RE = re.compile(
+    r"```([A-Za-z0-9_+-]*)\s*\n(.*?)\n```", re.S)
 
 STATE_PREFIX = "flashcards:v2"
 CPP_LANGUAGE = "cpp17"
@@ -279,7 +280,8 @@ class PersistentStateStore:
             if not isinstance(notebooks, dict):
                 notebooks = {}
                 self._state["notebooks"] = notebooks
-            notebooks[str(notebook_slug)] = self._normalize_notebook_state(state)
+            notebooks[str(notebook_slug)
+                      ] = self._normalize_notebook_state(state)
             self._persist()
 
     def save_note_state(self, notebook_slug: str, card_id: str, note_state: Dict[str, object]) -> None:
@@ -292,12 +294,14 @@ class PersistentStateStore:
             if not isinstance(notebook_notes, dict):
                 notebook_notes = {}
                 notes[str(notebook_slug)] = notebook_notes
-            notebook_notes[str(card_id)] = self._normalize_note_state(note_state)
+            notebook_notes[str(card_id)] = self._normalize_note_state(
+                note_state)
             self._persist()
 
     def _persist(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(self._state, ensure_ascii=False, indent=2, sort_keys=True)
+        payload = json.dumps(self._state, ensure_ascii=False,
+                             indent=2, sort_keys=True)
         tmp_path = self.state_path.with_suffix(".tmp")
         tmp_path.write_text(payload, encoding="utf-8")
         tmp_path.replace(self.state_path)
@@ -597,6 +601,23 @@ a:hover {
 
 .home-saved-shell {
   margin-top: 24px;
+}
+
+.home-collection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.home-collection-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.home-collection-body {
+  margin-top: 16px;
 }
 
 .saved-empty {
@@ -2251,11 +2272,48 @@ function bindHomePage() {
   const savedRoot = document.querySelector('[data-saved-root]');
   const savedEmpty = document.querySelector('[data-saved-empty]');
   const savedCount = document.querySelector('[data-saved-count]');
+  const collectionBodies = new Map(Array.from(document.querySelectorAll('[data-home-body]')).map((node) => [node.dataset.homeBody, node]));
+  const collectionToggles = new Map();
   const cardMap = new Map();
 
   boot.notebooks.forEach((notebook) => {
     notebook.cards.forEach((card) => {
       cardMap.set(cardKey(notebook.slug, card.number), { notebook, card });
+    });
+  });
+
+  document.querySelectorAll('[data-home-toggle]').forEach((button) => {
+    const target = button.dataset.homeToggle;
+    if (!target) {
+      return;
+    }
+    const group = collectionToggles.get(target) || { button: null };
+    group.button = button;
+    collectionToggles.set(target, group);
+  });
+
+  const setCollectionOpen = (name, open) => {
+    const body = collectionBodies.get(name);
+    const toggles = collectionToggles.get(name) || {};
+    if (body) {
+      body.hidden = !open;
+    }
+    if (toggles.button) {
+      toggles.button.textContent = open ? '折叠' : '展开';
+      toggles.button.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+  };
+
+  collectionToggles.forEach((_, name) => setCollectionOpen(name, false));
+
+  document.querySelectorAll('[data-home-toggle]').forEach((button) => {
+    const target = button.dataset.homeToggle;
+    if (!target) {
+      return;
+    }
+    button.addEventListener('click', () => {
+      const body = collectionBodies.get(target);
+      setCollectionOpen(target, !(body && !body.hidden));
     });
   });
 
@@ -2270,6 +2328,15 @@ function bindHomePage() {
     }
 
     if (!entries.length) {
+      if (savedRoot.querySelector('[data-saved-card]')) {
+        if (savedEmpty) {
+          savedEmpty.hidden = true;
+        }
+        if (savedCount) {
+          savedCount.textContent = String(savedRoot.querySelectorAll('[data-saved-card]').length);
+        }
+        return;
+      }
       savedRoot.innerHTML = '';
       if (savedEmpty) {
         savedEmpty.hidden = false;
@@ -2364,7 +2431,8 @@ def notebook_index() -> Tuple[Notebook, ...]:
 
 def load_notebook(spec: NotebookSpec) -> Notebook:
     if not spec.source_path.exists():
-        raise FileNotFoundError(f"Notebook source not found: {spec.source_path}")
+        raise FileNotFoundError(
+            f"Notebook source not found: {spec.source_path}")
 
     text = spec.source_path.read_text(encoding="utf-8")
     cards: List[Card] = []
@@ -2374,7 +2442,8 @@ def load_notebook(spec: NotebookSpec) -> Notebook:
         number = int(match.group(1))
         title = match.group(2).strip()
         body_start = match.end()
-        body_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        body_end = matches[index + 1].start() if index + \
+            1 < len(matches) else len(text)
         body = text[body_start:body_end].strip("\n")
         if not body.strip():
             continue
@@ -2455,7 +2524,8 @@ def render_markdown(text: str) -> str:
     def flush_paragraph() -> None:
         nonlocal paragraph
         if paragraph:
-            joined = " ".join(part.strip() for part in paragraph if part.strip())
+            joined = " ".join(part.strip()
+                              for part in paragraph if part.strip())
             if joined:
                 output.append(f"<p>{render_inline(joined)}</p>")
         paragraph = []
@@ -2463,7 +2533,8 @@ def render_markdown(text: str) -> str:
     def flush_list() -> None:
         nonlocal list_items
         if list_items:
-            items = "".join(f"<li>{render_inline(item)}</li>" for item in list_items)
+            items = "".join(
+                f"<li>{render_inline(item)}</li>" for item in list_items)
             output.append(f"<ul>{items}</ul>")
         list_items = []
 
@@ -2480,7 +2551,8 @@ def render_markdown(text: str) -> str:
             )
         else:
             lang = f" language-{html.escape(code_lang, quote=True)}" if code_lang else ""
-            output.append(f"<pre><code class=\"{lang.strip()}\">{html.escape(body)}</code></pre>")
+            output.append(
+                f"<pre><code class=\"{lang.strip()}\">{html.escape(body)}</code></pre>")
         code_lines = []
         code_lang = ""
 
@@ -2700,7 +2772,8 @@ def compile_cpp_submission(source: str, stdin_data: str = "", language: str = CP
             start_new_session=True,
         )
         try:
-            run_stdout, run_stderr = run_proc.communicate(input=stdin_data, timeout=RUN_TIMEOUT_SECONDS)
+            run_stdout, run_stderr = run_proc.communicate(
+                input=stdin_data, timeout=RUN_TIMEOUT_SECONDS)
             run_timed_out = False
         except subprocess.TimeoutExpired:
             run_timed_out = True
@@ -2714,7 +2787,8 @@ def compile_cpp_submission(source: str, stdin_data: str = "", language: str = CP
         run_stderr = truncate_text(run_stderr or "")
         run_returncode = run_proc.returncode
         if run_timed_out:
-            run_stderr = (run_stderr + "\n" if run_stderr else "") + f"Execution timed out after {RUN_TIMEOUT_SECONDS} seconds."
+            run_stderr = (run_stderr + "\n" if run_stderr else "") + \
+                f"Execution timed out after {RUN_TIMEOUT_SECONDS} seconds."
 
         return {
             "ok": (not run_timed_out) and run_returncode == 0,
@@ -2764,7 +2838,8 @@ def note_attachment_url(notebook_slug: str, card_id: str, filename: str) -> str:
 
 def save_note_attachment_file(state_dir: Path, notebook_slug: str, card_id: str, filename: str, data: bytes, mime_type: str) -> Dict[str, object]:
     if len(data) > MAX_NOTE_ATTACHMENT_BYTES:
-        raise ValueError(f"Attachment too large; limit is {MAX_NOTE_ATTACHMENT_BYTES} bytes.")
+        raise ValueError(
+            f"Attachment too large; limit is {MAX_NOTE_ATTACHMENT_BYTES} bytes.")
 
     attachment_dir = note_attachment_dir(state_dir, notebook_slug, card_id)
     attachment_dir.mkdir(parents=True, exist_ok=True)
@@ -2785,7 +2860,8 @@ def save_note_attachment_file(state_dir: Path, notebook_slug: str, card_id: str,
 
 
 def delete_note_attachment_file(state_dir: Path, notebook_slug: str, card_id: str, stored_name: str) -> None:
-    attachment_path = note_attachment_dir(state_dir, notebook_slug, card_id) / stored_name
+    attachment_path = note_attachment_dir(
+        state_dir, notebook_slug, card_id) / stored_name
     try:
         attachment_path.unlink()
     except FileNotFoundError:
@@ -2848,8 +2924,11 @@ def render_page(title: str, body: str, extra_head: str = "", boot_data: Optional
 
 def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[str, object]] = None) -> str:
     tiles = []
+    card_lookup = {}
     for notebook in notebooks:
         card_count = len(notebook.cards)
+        for card in notebook.cards:
+            card_lookup[f"{notebook.spec.slug}:{card.number}"] = (notebook, card)
         tiles.append(
             f"""
             <a class="card-tile" href="{overview_url(notebook)}">
@@ -2868,8 +2947,37 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
             """
         )
 
+    saved_entries = []
+    saved_state_root = (persistent_state or {}).get("saved_cards", []) if persistent_state else []
+    if isinstance(saved_state_root, list):
+        for key in saved_state_root:
+            pair = card_lookup.get(str(key))
+            if pair is None:
+                continue
+            notebook, card = pair
+            saved_entries.append(
+                f"""
+                <article class="card-tile saved-card" data-saved-card data-key="{html.escape(str(key), quote=True)}">
+                  <div class="card-meta">
+                    <span class="card-number">{card.number:02d}</span>
+                    <span>{html.escape(notebook.spec.title)}</span>
+                  </div>
+                  <h3>{html.escape(card.title)}</h3>
+                  <p class="card-preview">{html.escape(card.preview)}</p>
+                  <div class="tag-row">
+                    {section_badges(card.labels)}
+                  </div>
+                  <div class="reveal-actions">
+                    <a class="button" href="{card_url(notebook, card)}">Open</a>
+                    <button class="button-secondary" type="button" data-unsave-button data-key="{html.escape(str(key), quote=True)}">Remove</button>
+                  </div>
+                </article>
+                """
+            )
+
     note_entries = []
-    note_state_root = (persistent_state or {}).get("notes", {}) if persistent_state else {}
+    note_state_root = (persistent_state or {}).get(
+        "notes", {}) if persistent_state else {}
     if isinstance(note_state_root, dict):
         notebook_map = {notebook.spec.slug: notebook for notebook in notebooks}
         for notebook_slug, cards in note_state_root.items():
@@ -2895,7 +3003,8 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
                 card = notebook.by_number.get(card_number)
                 if card is None:
                     continue
-                preview = first_paragraph(text) if text.strip() else f"{len(attachments)} attachment(s)"
+                preview = first_paragraph(text) if text.strip(
+                ) else f"{len(attachments)} attachment(s)"
                 note_entries.append(
                     {
                         "updatedAt": updated_at if isinstance(updated_at, str) else "",
@@ -2919,7 +3028,8 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
                     }
                 )
 
-    note_entries.sort(key=lambda entry: entry.get("updatedAt", ""), reverse=True)
+    note_entries.sort(key=lambda entry: entry.get(
+        "updatedAt", ""), reverse=True)
     note_tiles = [entry["html"] for entry in note_entries[:12]]
 
     body = f"""
@@ -2940,20 +3050,34 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
         <span class="button-secondary">Markdown 是唯一内容源</span>
       </div>
       <section class="home-saved-shell">
-        <div class="card-meta">
-          <span class="muted">Saved cards</span>
-          <span class="muted"><strong data-saved-count>0</strong> saved</span>
+        <div class="home-collection-head">
+          <div class="card-meta">
+            <span class="muted">Saved cards</span>
+            <span class="muted"><strong data-saved-count>{len(saved_entries)}</strong> saved</span>
+          </div>
+          <div class="home-collection-actions">
+            <button class="button-secondary" type="button" data-home-toggle="saved" data-home-collapsed>展开</button>
+          </div>
         </div>
-        <p class="saved-empty" data-saved-empty>你还没有保存任何题目。点开题目页里的 SAVE 就会出现在这里。</p>
-        <div class="overview-grid saved-grid" data-saved-root></div>
+        <div class="home-collection-body" data-home-body="saved" hidden>
+          <p class="saved-empty" data-saved-empty {'hidden' if saved_entries else ''}>你还没有保存任何题目。点开题目页里的 SAVE 就会出现在这里。</p>
+          <div class="overview-grid saved-grid" data-saved-root>{''.join(saved_entries)}</div>
+        </div>
       </section>
       <section class="home-saved-shell">
-        <div class="card-meta">
-          <span class="muted">My Notes</span>
-          <span class="muted">{len(note_tiles)} recent</span>
+        <div class="home-collection-head">
+          <div class="card-meta">
+            <span class="muted">My Notes</span>
+            <span class="muted">{len(note_tiles)} recent</span>
+          </div>
+          <div class="home-collection-actions">
+            <button class="button-secondary" type="button" data-home-toggle="notes" data-home-collapsed>展开</button>
+          </div>
         </div>
-        <p class="saved-empty" {'hidden' if note_tiles else ''}>你的 note 还为空。打开题目页里的 note 区，输入文字或粘贴截图后会出现在这里。</p>
-        <div class="overview-grid saved-grid">{''.join(note_tiles)}</div>
+        <div class="home-collection-body" data-home-body="notes" hidden>
+          <p class="saved-empty" {'hidden' if note_tiles else ''}>你的 note 还为空。打开题目页里的 note 区，输入文字或粘贴截图后会出现在这里。</p>
+          <div class="overview-grid saved-grid">{''.join(note_tiles)}</div>
+        </div>
       </section>
       <section class="overview-grid">
         {''.join(tiles)}
@@ -2967,7 +3091,8 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
 def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, object]] = None) -> str:
     cards = []
     for card in notebook.cards:
-        search_text = " ".join([card.title, card.preview, " ".join(card.labels)])
+        search_text = " ".join(
+            [card.title, card.preview, " ".join(card.labels)])
         cards.append(
             f"""
             <a class="question-cell is-new" data-question-cell data-card-id="{card.number}" data-search-text="{html.escape(search_text, quote=True)}" href="{card_url(notebook, card)}" aria-label="{html.escape(card.title, quote=True)}" title="{html.escape(card.title, quote=True)}">
@@ -2978,7 +3103,8 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
 
     tiles = []
     for card in notebook.cards:
-        search_text = " ".join([card.title, card.preview, " ".join(card.labels)])
+        search_text = " ".join(
+            [card.title, card.preview, " ".join(card.labels)])
         tiles.append(
             f"""
             <a class="card-tile" data-card-tile data-search-text="{html.escape(search_text, quote=True)}" href="{card_url(notebook, card)}">
@@ -3053,9 +3179,11 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
 def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[Dict[str, object]] = None) -> str:
     card_index = card.number - 1
     previous_card = notebook.cards[card_index - 1] if card_index > 0 else None
-    next_card = notebook.cards[card_index + 1] if card_index + 1 < len(notebook.cards) else None
+    next_card = notebook.cards[card_index +
+                               1] if card_index + 1 < len(notebook.cards) else None
     playground_data = playground_payload(card)
-    playground_data_json = html.escape(json.dumps(playground_data, ensure_ascii=False), quote=True)
+    playground_data_json = html.escape(json.dumps(
+        playground_data, ensure_ascii=False), quote=True)
     answer_sections = "".join(
         f"""
         <section class="answer-section{' is-english' if section.title.lower() == 'english explanation' else ''}">
@@ -3210,7 +3338,8 @@ class FlashcardServer(BaseHTTPRequestHandler):
     state_store: PersistentStateStore
 
     def log_message(self, format: str, *args) -> None:  # noqa: A003
-        sys.stderr.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), format % args))
+        sys.stderr.write("%s - - [%s] %s\n" % (self.address_string(),
+                         self.log_date_time_string(), format % args))
 
     def do_GET(self) -> None:  # noqa: N802
         self.handle_request(send_body=True)
@@ -3226,7 +3355,8 @@ class FlashcardServer(BaseHTTPRequestHandler):
         route = parsed.path.rstrip("/") or "/"
 
         if route == "/":
-            self.send_html(render_home(self.notebooks, self.state_store.snapshot()), send_body=send_body)
+            self.send_html(render_home(
+                self.notebooks, self.state_store.snapshot()), send_body=send_body)
             return
 
         if route == "/_api/state":
@@ -3234,11 +3364,13 @@ class FlashcardServer(BaseHTTPRequestHandler):
             return
 
         if route in {"/_static/app.css", "/static/app.css"}:
-            self.send_text(APP_CSS, "text/css; charset=utf-8", send_body=send_body)
+            self.send_text(APP_CSS, "text/css; charset=utf-8",
+                           send_body=send_body)
             return
 
         if route in {"/_static/app.js", "/static/app.js"}:
-            self.send_text(APP_JS, "application/javascript; charset=utf-8", send_body=send_body)
+            self.send_text(
+                APP_JS, "application/javascript; charset=utf-8", send_body=send_body)
             return
 
         if route.startswith("/_attachments/"):
@@ -3258,11 +3390,13 @@ class FlashcardServer(BaseHTTPRequestHandler):
             return
 
         if len(parts) == 1:
-            self.send_html(render_overview(notebook, self.state_store.snapshot()), send_body=send_body)
+            self.send_html(render_overview(
+                notebook, self.state_store.snapshot()), send_body=send_body)
             return
 
         if len(parts) == 2 and parts[1] == "random":
-            self.send_redirect(card_url(notebook, random.choice(notebook.cards)))
+            self.send_redirect(
+                card_url(notebook, random.choice(notebook.cards)))
             return
 
         if len(parts) == 2 and parts[1].isdigit():
@@ -3271,7 +3405,8 @@ class FlashcardServer(BaseHTTPRequestHandler):
             if card is None:
                 self.send_not_found(send_body=send_body)
                 return
-            self.send_html(render_card_page(notebook, card, self.state_store.snapshot()), send_body=send_body)
+            self.send_html(render_card_page(
+                notebook, card, self.state_store.snapshot()), send_body=send_body)
             return
 
         self.send_not_found(send_body=send_body)
@@ -3307,45 +3442,54 @@ class FlashcardServer(BaseHTTPRequestHandler):
         notebook_slug = parts[1]
         card_id = parts[2]
         filename = parts[3]
-        attachment_path = note_attachment_dir(self.state_store.state_dir, notebook_slug, card_id) / filename
+        attachment_path = note_attachment_dir(
+            self.state_store.state_dir, notebook_slug, card_id) / filename
         if not attachment_path.exists():
             self.send_not_found(send_body=send_body)
             return
 
-        mime_type = mimetypes.guess_type(attachment_path.name)[0] or "application/octet-stream"
+        mime_type = mimetypes.guess_type(attachment_path.name)[
+            0] or "application/octet-stream"
         self.send_file(attachment_path, mime_type, send_body=send_body)
 
     def handle_state_update(self, send_body: bool) -> None:
         content_length = int(self.headers.get("Content-Length", "0") or "0")
-        raw_body = self.rfile.read(content_length) if content_length > 0 else b""
+        raw_body = self.rfile.read(
+            content_length) if content_length > 0 else b""
         try:
             payload = json.loads(raw_body.decode("utf-8"))
         except json.JSONDecodeError:
-            self.send_json({"ok": False, "error": "Invalid JSON payload."}, status=400, send_body=send_body)
+            self.send_json(
+                {"ok": False, "error": "Invalid JSON payload."}, status=400, send_body=send_body)
             return
 
         kind = payload.get("kind")
         if kind == "saved_cards":
             saved_cards = payload.get("savedCards", [])
             if not isinstance(saved_cards, list):
-                self.send_json({"ok": False, "error": "savedCards must be a list."}, status=400, send_body=send_body)
+                self.send_json(
+                    {"ok": False, "error": "savedCards must be a list."}, status=400, send_body=send_body)
                 return
             saved_cards = [str(entry) for entry in saved_cards]
             self.state_store.save_saved_cards(saved_cards)
-            self.send_json({"ok": True, "savedCards": saved_cards}, send_body=send_body)
+            self.send_json(
+                {"ok": True, "savedCards": saved_cards}, send_body=send_body)
             return
 
         if kind == "notebook":
             notebook_slug = payload.get("notebookSlug", "")
             state = payload.get("state", {})
             if not isinstance(notebook_slug, str) or not notebook_slug:
-                self.send_json({"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
+                self.send_json(
+                    {"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
                 return
             if not isinstance(state, dict):
-                self.send_json({"ok": False, "error": "state must be an object."}, status=400, send_body=send_body)
+                self.send_json(
+                    {"ok": False, "error": "state must be an object."}, status=400, send_body=send_body)
                 return
             self.state_store.save_notebook_state(notebook_slug, state)
-            self.send_json({"ok": True, "notebookSlug": notebook_slug}, send_body=send_body)
+            self.send_json(
+                {"ok": True, "notebookSlug": notebook_slug}, send_body=send_body)
             return
 
         if kind == "note":
@@ -3353,27 +3497,35 @@ class FlashcardServer(BaseHTTPRequestHandler):
             card_id = payload.get("cardId", "")
             note_state = payload.get("noteState", {})
             if not isinstance(notebook_slug, str) or not notebook_slug:
-                self.send_json({"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
+                self.send_json(
+                    {"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
                 return
             if not isinstance(card_id, str) or not card_id:
-                self.send_json({"ok": False, "error": "cardId must be a string."}, status=400, send_body=send_body)
+                self.send_json(
+                    {"ok": False, "error": "cardId must be a string."}, status=400, send_body=send_body)
                 return
             if not isinstance(note_state, dict):
-                self.send_json({"ok": False, "error": "noteState must be an object."}, status=400, send_body=send_body)
+                self.send_json(
+                    {"ok": False, "error": "noteState must be an object."}, status=400, send_body=send_body)
                 return
-            self.state_store.save_note_state(notebook_slug, card_id, note_state)
-            self.send_json({"ok": True, "notebookSlug": notebook_slug, "cardId": card_id}, send_body=send_body)
+            self.state_store.save_note_state(
+                notebook_slug, card_id, note_state)
+            self.send_json({"ok": True, "notebookSlug": notebook_slug,
+                           "cardId": card_id}, send_body=send_body)
             return
 
-        self.send_json({"ok": False, "error": "Unsupported state update kind."}, status=400, send_body=send_body)
+        self.send_json({"ok": False, "error": "Unsupported state update kind."},
+                       status=400, send_body=send_body)
 
     def handle_note_attachment_upload(self, send_body: bool) -> None:
         content_length = int(self.headers.get("Content-Length", "0") or "0")
-        raw_body = self.rfile.read(content_length) if content_length > 0 else b""
+        raw_body = self.rfile.read(
+            content_length) if content_length > 0 else b""
         try:
             payload = json.loads(raw_body.decode("utf-8"))
         except json.JSONDecodeError:
-            self.send_json({"ok": False, "error": "Invalid JSON payload."}, status=400, send_body=send_body)
+            self.send_json(
+                {"ok": False, "error": "Invalid JSON payload."}, status=400, send_body=send_body)
             return
 
         notebook_slug = payload.get("notebookSlug", "")
@@ -3381,61 +3533,76 @@ class FlashcardServer(BaseHTTPRequestHandler):
         filename = payload.get("filename", "")
         data_url = payload.get("dataUrl", "")
         if not isinstance(notebook_slug, str) or not notebook_slug:
-            self.send_json({"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
+            self.send_json(
+                {"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
             return
         if not isinstance(card_id, str) or not card_id:
-            self.send_json({"ok": False, "error": "cardId must be a string."}, status=400, send_body=send_body)
+            self.send_json(
+                {"ok": False, "error": "cardId must be a string."}, status=400, send_body=send_body)
             return
         if not isinstance(filename, str) or not isinstance(data_url, str):
-            self.send_json({"ok": False, "error": "filename and dataUrl must be strings."}, status=400, send_body=send_body)
+            self.send_json(
+                {"ok": False, "error": "filename and dataUrl must be strings."}, status=400, send_body=send_body)
             return
 
         try:
             data, mime_type = decode_data_url(data_url)
-            attachment = save_note_attachment_file(self.state_store.state_dir, notebook_slug, card_id, filename, data, mime_type)
+            attachment = save_note_attachment_file(
+                self.state_store.state_dir, notebook_slug, card_id, filename, data, mime_type)
         except (ValueError, OSError) as exc:
-            self.send_json({"ok": False, "error": str(exc)}, status=400, send_body=send_body)
+            self.send_json({"ok": False, "error": str(exc)},
+                           status=400, send_body=send_body)
             return
 
-        self.send_json({"ok": True, "attachment": attachment}, send_body=send_body)
+        self.send_json({"ok": True, "attachment": attachment},
+                       send_body=send_body)
 
     def handle_note_attachment_delete(self, send_body: bool) -> None:
         content_length = int(self.headers.get("Content-Length", "0") or "0")
-        raw_body = self.rfile.read(content_length) if content_length > 0 else b""
+        raw_body = self.rfile.read(
+            content_length) if content_length > 0 else b""
         try:
             payload = json.loads(raw_body.decode("utf-8"))
         except json.JSONDecodeError:
-            self.send_json({"ok": False, "error": "Invalid JSON payload."}, status=400, send_body=send_body)
+            self.send_json(
+                {"ok": False, "error": "Invalid JSON payload."}, status=400, send_body=send_body)
             return
 
         notebook_slug = payload.get("notebookSlug", "")
         card_id = payload.get("cardId", "")
         attachment_url = payload.get("attachmentUrl", "")
         if not isinstance(notebook_slug, str) or not notebook_slug:
-            self.send_json({"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
+            self.send_json(
+                {"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
             return
         if not isinstance(card_id, str) or not card_id:
-            self.send_json({"ok": False, "error": "cardId must be a string."}, status=400, send_body=send_body)
+            self.send_json(
+                {"ok": False, "error": "cardId must be a string."}, status=400, send_body=send_body)
             return
         if not isinstance(attachment_url, str) or not attachment_url:
-            self.send_json({"ok": False, "error": "attachmentUrl must be a string."}, status=400, send_body=send_body)
+            self.send_json(
+                {"ok": False, "error": "attachmentUrl must be a string."}, status=400, send_body=send_body)
             return
 
         stored_name = attachment_url_to_stored_name(attachment_url)
         if not stored_name:
-            self.send_json({"ok": False, "error": "Invalid attachment URL."}, status=400, send_body=send_body)
+            self.send_json(
+                {"ok": False, "error": "Invalid attachment URL."}, status=400, send_body=send_body)
             return
 
-        delete_note_attachment_file(self.state_store.state_dir, notebook_slug, card_id, stored_name)
+        delete_note_attachment_file(
+            self.state_store.state_dir, notebook_slug, card_id, stored_name)
         self.send_json({"ok": True}, send_body=send_body)
 
     def handle_compile(self, send_body: bool) -> None:
         content_length = int(self.headers.get("Content-Length", "0") or "0")
-        raw_body = self.rfile.read(content_length) if content_length > 0 else b""
+        raw_body = self.rfile.read(
+            content_length) if content_length > 0 else b""
         try:
             payload = json.loads(raw_body.decode("utf-8"))
         except json.JSONDecodeError:
-            self.send_json({"ok": False, "error": "Invalid JSON payload."}, status=400, send_body=send_body)
+            self.send_json(
+                {"ok": False, "error": "Invalid JSON payload."}, status=400, send_body=send_body)
             return
 
         source = payload.get("source", "")
@@ -3443,15 +3610,18 @@ class FlashcardServer(BaseHTTPRequestHandler):
         language = payload.get("language", CPP_LANGUAGE)
 
         if not isinstance(source, str) or not isinstance(stdin_data, str) or not isinstance(language, str):
-            self.send_json({"ok": False, "error": "source, stdin and language must be strings."}, status=400, send_body=send_body)
+            self.send_json(
+                {"ok": False, "error": "source, stdin and language must be strings."}, status=400, send_body=send_body)
             return
 
         notebook_slug = payload.get("notebook_slug", "")
         card_id = payload.get("card_id", "")
         if notebook_slug or card_id:
-            sys.stderr.write(f"[compile] notebook={notebook_slug!r} card={card_id!r}\n")
+            sys.stderr.write(
+                f"[compile] notebook={notebook_slug!r} card={card_id!r}\n")
 
-        result = compile_cpp_submission(source=source, stdin_data=stdin_data, language=language)
+        result = compile_cpp_submission(
+            source=source, stdin_data=stdin_data, language=language)
         self.send_json(result, status=200, send_body=send_body)
 
     def send_html(self, content: str, status: int = 200, send_body: bool = True) -> None:
@@ -3497,7 +3667,8 @@ class FlashcardServer(BaseHTTPRequestHandler):
 
     def send_not_found(self, send_body: bool = True) -> None:
         self.send_html(
-            render_page("Not found", '<div class="app-shell"><p>Page not found.</p></div>'),
+            render_page(
+                "Not found", '<div class="app-shell"><p>Page not found.</p></div>'),
             status=404,
             send_body=send_body,
         )
@@ -3510,21 +3681,27 @@ def build_notebooks() -> Tuple[Notebook, ...]:
 def check_notebooks(notebooks: Sequence[Notebook]) -> None:
     for notebook in notebooks:
         if not notebook.cards:
-            raise RuntimeError(f"No cards found in {notebook.spec.source_path}")
+            raise RuntimeError(
+                f"No cards found in {notebook.spec.source_path}")
         first = notebook.cards[0]
         last = notebook.cards[-1]
         if first.number != 1:
-            raise RuntimeError(f"{notebook.spec.slug}: expected first card to be #1, got #{first.number}")
+            raise RuntimeError(
+                f"{notebook.spec.slug}: expected first card to be #1, got #{first.number}")
         if last.number < first.number:
             raise RuntimeError(f"{notebook.spec.slug}: invalid card ordering")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Serve the C++ flash card notebook locally.")
+    parser = argparse.ArgumentParser(
+        description="Serve the C++ flash card notebook locally.")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind to.")
-    parser.add_argument("--port", default=8000, type=int, help="Port to bind to.")
-    parser.add_argument("--no-browser", action="store_true", help="Do not open a browser window.")
-    parser.add_argument("--check", action="store_true", help="Validate the notebook and exit.")
+    parser.add_argument("--port", default=8000, type=int,
+                        help="Port to bind to.")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="Do not open a browser window.")
+    parser.add_argument("--check", action="store_true",
+                        help="Validate the notebook and exit.")
     args = parser.parse_args(argv)
 
     notebooks = build_notebooks()
@@ -3541,7 +3718,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     url = f"http://{args.host}:{args.port}/"
     print(f"Serving flash cards at {url}")
     if not args.no_browser:
-        webbrowser.open(url)
+        # webbrowser.open(url) --- IGNORE ---
+        pass
 
     try:
         server.serve_forever()

@@ -3,6 +3,9 @@ GID ?= $(shell id -g)
 ARCH ?= $(shell uname -m)
 LAN_HOST ?= 0.0.0.0
 LAN_PORT ?= 8000
+HOST_PORT ?= 8000
+Raspberry_Pi_5_ip ?=172.29.49.234
+
 
 COMPOSE_BASE = docker compose -f docker-compose.yml
 COMPOSE_X86 = $(COMPOSE_BASE) -f docker-compose.x86.yml
@@ -23,6 +26,7 @@ help:
 	@echo "  make docker-up-x86 Force amd64 container"
 	@echo "  make docker-up-arm Force arm64 container"
 	@echo "  make docker-up-lan Same as docker-up, explicit LAN-accessible entrypoint"
+	@echo "  make docker-up-arm HOST_PORT=8001  Use a different host port if 8000 is busy"
 	@echo "  make docker-down   Stop the container stack"
 	@echo "  make docker-build  Build the container image"
 
@@ -33,21 +37,34 @@ server: data
 	python3 tools/flashcards_app.py --host $(LAN_HOST) --port $(LAN_PORT)
 
 docker-build: data
-	UID=$(UID) GID=$(GID) $(COMPOSE_AUTO) build
+	UID=$(UID) GID=$(GID) HOST_PORT=$(HOST_PORT) $(COMPOSE_AUTO) build
 
 docker-up: data
-	UID=$(UID) GID=$(GID) $(COMPOSE_AUTO) up --build
+	UID=$(UID) GID=$(GID) HOST_PORT=$(HOST_PORT) $(COMPOSE_AUTO) up --build
 
 docker-up-lan: docker-up
 
 docker-up-x86: data
-	UID=$(UID) GID=$(GID) $(COMPOSE_X86) up --build
+	UID=$(UID) GID=$(GID) HOST_PORT=$(HOST_PORT) $(COMPOSE_X86) up --build
 
 docker-up-arm: data
-	UID=$(UID) GID=$(GID) $(COMPOSE_ARM) up --build
+	UID=$(UID) GID=$(GID) HOST_PORT=$(HOST_PORT) $(COMPOSE_ARM) up --build
 
 docker-down:
-	UID=$(UID) GID=$(GID) $(COMPOSE_AUTO) down
+	UID=$(UID) GID=$(GID) HOST_PORT=$(HOST_PORT) $(COMPOSE_AUTO) down
 
 docker-logs:
-	UID=$(UID) GID=$(GID) $(COMPOSE_AUTO) logs -f
+	UID=$(UID) GID=$(GID) HOST_PORT=$(HOST_PORT) $(COMPOSE_AUTO) logs -f
+
+rspi5-sync: # rsync the current directory to the Raspberry Pi 5, excluding the data directory and any __pycache__ directories
+	rsync -avz --exclude 'data' --exclude '__pycache__' . prefor@$(Raspberry_Pi_5_ip):~/flashcards
+
+rspi5-ssh:
+	ssh prefor@$(Raspberry_Pi_5_ip)  
+
+# ssh to Raspberry Pi 5 and run the architecture-appropriate docker-compose command to start the server
+rspi5-run-server-test: rspi5-sync
+	ssh prefor@$(Raspberry_Pi_5_ip) 'cd flashcards && HOST_PORT=$${HOST_PORT:-8000} docker compose -f docker-compose.yml -f docker-compose.arm.yml up --build'
+
+rspi5-run-server-tmux: rspi5-sync
+	ssh prefor@$(Raspberry_Pi_5_ip) 'cd flashcards && tmux new-session -d -s flashcards_server "HOST_PORT=$${HOST_PORT:-8000} docker compose -f docker-compose.yml -f docker-compose.arm.yml up --build" || tmux send-keys -t flashcards_server "HOST_PORT=$${HOST_PORT:-8000} docker compose -f docker-compose.yml -f docker-compose.arm.yml up --build" C-m'

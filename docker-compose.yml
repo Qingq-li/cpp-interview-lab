@@ -6,7 +6,7 @@ services:
     user: "${UID:-1000}:${GID:-1000}"
     working_dir: /app
     ports:
-      - "8000:8000"
+      - "${HOST_PORT:-8000}:8000"
     environment:
       FLASHCARDS_HOST: 0.0.0.0
       FLASHCARDS_PORT: 8000
