@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import cgi
 import argparse
 import html
 import json
@@ -14,14 +13,15 @@ import sys
 import subprocess
 import threading
 import uuid
-import webbrowser
+import struct
+import zlib
 from datetime import datetime
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 import tempfile
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -153,6 +153,228 @@ MAX_NOTE_TEXT_CHARS = 100_000
 MAX_NOTE_ATTACHMENT_BYTES = 8 * 1024 * 1024
 DEFAULT_STATE_DIR = Path(os.environ.get("FLASHCARDS_STATE_DIR", ROOT / "data"))
 STATE_FILE_NAME = "flashcards-state.json"
+PWA_THEME_COLOR = "#0f766e"
+PWA_APP_NAME = "C++ 学习笔记卡片站"
+PWA_SHORT_NAME = "C++ 卡片站"
+PWA_ICON_180_PATH = "/_static/pwa-icon-180.png"
+PWA_ICON_512_PATH = "/_static/pwa-icon-512.png"
+PWA_MANIFEST_PATH = "/manifest.webmanifest"
+PWA_SERVICE_WORKER_PATH = "/_static/sw.js"
+
+
+def _png_chunk(kind: bytes, payload: bytes) -> bytes:
+    crc = zlib.crc32(kind + payload) & 0xFFFFFFFF
+    return struct.pack("!I", len(payload)) + kind + payload + struct.pack("!I", crc)
+
+
+def _draw_line(buffer: bytearray, size: int, x0: int, y0: int, x1: int, y1: int, rgba:
+               Tuple[int, int, int, int]) -> None:
+    dx = abs(x1 - x0)
+    dy = -abs(y1 - y0)
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+    err = dx + dy
+    while True:
+        if 0 <= x0 < size and 0 <= y0 < size:
+            index = (y0 * size + x0) * 4
+            buffer[index:index + 4] = bytes(rgba)
+        if x0 == x1 and y0 == y1:
+            break
+        twice = 2 * err
+        if twice >= dy:
+            err += dy
+            x0 += sx
+        if twice <= dx:
+            err += dx
+            y0 += sy
+
+
+def _fill_rect(
+    buffer: bytearray,
+    size: int,
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
+    rgba: Tuple[int, int, int, int],
+) -> None:
+    for y in range(max(0, y0), min(size, y1)):
+        row = y * size
+        for x in range(max(0, x0), min(size, x1)):
+            index = (row + x) * 4
+            buffer[index:index + 4] = bytes(rgba)
+
+
+def _fill_circle(
+    buffer: bytearray,
+    size: int,
+    cx: float,
+    cy: float,
+    radius: float,
+    rgba: Tuple[int, int, int, int],
+) -> None:
+    radius_sq = radius * radius
+    x0 = max(0, int(cx - radius))
+    x1 = min(size, int(cx + radius) + 1)
+    y0 = max(0, int(cy - radius))
+    y1 = min(size, int(cy + radius) + 1)
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            dx = x - cx
+            dy = y - cy
+            if dx * dx + dy * dy <= radius_sq:
+                index = (y * size + x) * 4
+                buffer[index:index + 4] = bytes(rgba)
+
+
+def build_pwa_icon_png(size: int) -> bytes:
+    if size <= 0:
+        raise ValueError("Icon size must be positive.")
+
+    buffer = bytearray(size * size * 4)
+    bg = (15, 118, 110, 255)
+    cream = (250, 247, 239, 255)
+    white = (255, 255, 255, 255)
+    accent = (180, 83, 9, 255)
+
+    for y in range(size):
+        row = y * size
+        for x in range(size):
+            index = (row + x) * 4
+            buffer[index:index + 4] = bytes(bg)
+
+    _fill_circle(buffer, size, size * 0.5, size * 0.5, size * 0.28, cream)
+
+    left = int(size * 0.31)
+    right = int(size * 0.69)
+    top = int(size * 0.34)
+    bottom = int(size * 0.66)
+    notch = max(2, size // 32)
+
+    _draw_line(buffer, size, left, top, left - notch, size // 2, white)
+    _draw_line(buffer, size, left - notch, size // 2, left, bottom, white)
+    _draw_line(buffer, size, right, top, right + notch, size // 2, white)
+    _draw_line(buffer, size, right + notch, size // 2, right, bottom, white)
+
+    plus_w = max(4, size // 24)
+    plus_h = max(4, size // 24)
+    cx = size // 2
+    cy = size // 2
+    _fill_rect(buffer, size, cx - plus_w, cy - plus_h *
+               3, cx + plus_w, cy + plus_h * 3, accent)
+    _fill_rect(buffer, size, cx - plus_h * 3, cy - plus_w,
+               cx + plus_h * 3, cy + plus_w, accent)
+
+    raw = bytearray()
+    raw.extend(b"\x89PNG\r\n\x1a\n")
+    ihdr = struct.pack("!IIBBBBB", size, size, 8, 6, 0, 0, 0)
+    raw.extend(_png_chunk(b"IHDR", ihdr))
+    scanlines = bytearray()
+    stride = size * 4
+    for y in range(size):
+        scanlines.append(0)
+        start = y * stride
+        scanlines.extend(buffer[start:start + stride])
+    raw.extend(_png_chunk(b"IDAT", zlib.compress(bytes(scanlines), level=9)))
+    raw.extend(_png_chunk(b"IEND", b""))
+    return bytes(raw)
+
+
+PWA_ICON_180_PNG = build_pwa_icon_png(180)
+PWA_ICON_512_PNG = build_pwa_icon_png(512)
+PWA_MANIFEST = {
+    "name": PWA_APP_NAME,
+    "short_name": PWA_SHORT_NAME,
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "background_color": PWA_THEME_COLOR,
+    "theme_color": PWA_THEME_COLOR,
+    "icons": [
+        {
+            "src": PWA_ICON_180_PATH,
+            "sizes": "180x180",
+            "type": "image/png",
+            "purpose": "any maskable",
+        },
+        {
+            "src": PWA_ICON_512_PATH,
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable",
+        },
+    ],
+}
+
+
+def build_service_worker_js() -> str:
+    precache = [
+        "/",
+        "/_static/app.css",
+        "/_static/app.js",
+        PWA_MANIFEST_PATH,
+        PWA_ICON_180_PATH,
+        PWA_ICON_512_PATH,
+    ]
+    precache_json = json.dumps(precache, ensure_ascii=False)
+    return f"""
+const CACHE_NAME = 'flashcards-pwa-v1';
+const PRECACHE_URLS = {precache_json};
+
+self.addEventListener('install', (event) => {{
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS))
+  );
+  self.skipWaiting();
+}});
+
+self.addEventListener('activate', (event) => {{
+  event.waitUntil(
+    caches.keys().then((keys) => Promise.all(
+      keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+    ))
+  );
+  self.clients.claim();
+}});
+
+self.addEventListener('fetch', (event) => {{
+  const {{ request }} = event;
+  if (request.method !== 'GET') {{
+    return;
+  }}
+
+  const url = new URL(request.url);
+  if (request.mode === 'navigate') {{
+    event.respondWith(
+      fetch(request)
+        .then((response) => {{
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          return response;
+        }})
+        .catch(() => caches.match(request).then((cached) => cached || caches.match('/')))
+    );
+    return;
+  }}
+
+  if (url.origin === self.location.origin) {{
+    event.respondWith(
+      caches.match(request).then((cached) => {{
+        if (cached) {{
+          return cached;
+        }}
+        return fetch(request).then((response) => {{
+          if (response.ok) {{
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }}
+          return response;
+        }});
+      }})
+    );
+  }}
+}});
+""".strip()
 
 
 class PersistentStateStore:
@@ -249,14 +471,19 @@ class PersistentStateStore:
             attachment_id = attachment.get("id", "")
             if not isinstance(attachment_id, str) or not attachment_id:
                 continue
+            filename = attachment.get("filename", "")
+            url = attachment.get("url", "")
+            mime_type = attachment.get("mimeType", "")
+            created_at = attachment.get("createdAt", "")
+            size_value = attachment.get("size", 0)
             normalized_attachments.append(
                 {
                     "id": attachment_id,
-                    "filename": attachment.get("filename", "") if isinstance(attachment.get("filename", ""), str) else "",
-                    "url": attachment.get("url", "") if isinstance(attachment.get("url", ""), str) else "",
-                    "mimeType": attachment.get("mimeType", "") if isinstance(attachment.get("mimeType", ""), str) else "",
-                    "createdAt": attachment.get("createdAt", "") if isinstance(attachment.get("createdAt", ""), str) else "",
-                    "size": int(attachment.get("size", 0)) if isinstance(attachment.get("size", 0), int) else 0,
+                    "filename": filename if isinstance(filename, str) else "",
+                    "url": url if isinstance(url, str) else "",
+                    "mimeType": mime_type if isinstance(mime_type, str) else "",
+                    "createdAt": created_at if isinstance(created_at, str) else "",
+                    "size": int(size_value) if isinstance(size_value, int) else 0,
                 }
             )
         return {
@@ -1322,8 +1549,14 @@ function getBootPersistentState() {
   const persistentState = boot.persistentState || {};
   return {
     saved_cards: Array.isArray(persistentState.saved_cards) ? persistentState.saved_cards : [],
-    notebooks: persistentState.notebooks && typeof persistentState.notebooks === 'object' ? persistentState.notebooks : {},
-    notes: persistentState.notes && typeof persistentState.notes === 'object' ? persistentState.notes : {},
+    notebooks:
+      persistentState.notebooks && typeof persistentState.notebooks === 'object'
+        ? persistentState.notebooks
+        : {},
+    notes:
+      persistentState.notes && typeof persistentState.notes === 'object'
+        ? persistentState.notes
+        : {},
   };
 }
 
@@ -1679,7 +1912,10 @@ function bindPlaygroundPanel() {
   const notebookSlug = root.dataset.notebookSlug;
   const cardId = root.dataset.cardId;
   const storageKey = `playground:${notebookSlug}:${cardId}`;
-  const data = safeJsonParse(root.dataset.playgroundData || '{}', { samples: [], defaultSource: '', defaultTemplate: '', language: 'cpp17' }) || {};
+  const data = safeJsonParse(
+    root.dataset.playgroundData || '{}',
+    { samples: [], defaultSource: '', defaultTemplate: '', language: 'cpp17' },
+  ) || {};
   const samples = Array.isArray(data.samples) ? data.samples : [];
   const defaultSource = typeof data.defaultSource === 'string' ? data.defaultSource : '';
   const defaultTemplate = typeof data.defaultTemplate === 'string' ? data.defaultTemplate : '';
@@ -1956,15 +2192,23 @@ function escapeRegExp(value) {
 function renderNotePreview(text) {
   const escaped = escapeHtml(text || '');
   if (!escaped.trim()) {
-    return '<div class="note-empty">Paste text or screenshots here. `Ctrl+V` works when the note editor is focused.</div>';
+    return (
+      '<div class="note-empty">Paste text or screenshots here. '
+      + '`Ctrl+V` works when the note editor is focused.</div>'
+    );
   }
 
   let htmlText = escaped;
-  htmlText = htmlText.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
+  htmlText = htmlText.replace(/!\\[([^\\]]*)\\]\\(([^)]+)\\)/g, (match, alt, url) => {
     const safeAlt = escapeHtml(alt || '');
-    return `<figure class="note-image"><img src="${escapeHtml(url)}" alt="${safeAlt}"><figcaption>${safeAlt || 'image'}</figcaption></figure>`;
+    return (
+      `<figure class="note-image"><img src="${escapeHtml(url)}" alt="${safeAlt}">`
+      + `<figcaption>${safeAlt || 'image'}</figcaption></figure>`
+    );
   });
-  htmlText = htmlText.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url) => `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${label}</a>`);
+  htmlText = htmlText.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, (match, label, url) => (
+    `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${label}</a>`
+  ));
   return htmlText.split(String.fromCharCode(10)).join('<br>');
 }
 
@@ -2091,7 +2335,13 @@ function bindNotePanel() {
       .map((attachment) => {
         const isImage = (attachment.mimeType || '').startsWith('image/');
         const previewHtml = isImage
-          ? `<img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.filename || 'attachment')}" class="note-attachment-preview">`
+          ? `
+              <img
+                src="${escapeHtml(attachment.url)}"
+                alt="${escapeHtml(attachment.filename || 'attachment')}"
+                class="note-attachment-preview"
+              >
+            `
           : `<span class="note-file-icon">FILE</span>`;
         return `
           <article class="note-attachment-card" data-attachment-id="${escapeHtml(attachment.id)}">
@@ -2104,7 +2354,14 @@ function bindNotePanel() {
             </div>
             <div class="note-attachment-actions">
               <a class="button-secondary" href="${escapeHtml(attachment.url)}" target="_blank" rel="noreferrer">Open</a>
-              <button class="button-secondary" type="button" data-note-delete-attachment data-attachment-url="${escapeHtml(attachment.url)}">Delete</button>
+              <button
+                class="button-secondary"
+                type="button"
+                data-note-delete-attachment
+                data-attachment-url="${escapeHtml(attachment.url)}"
+              >
+                Delete
+              </button>
             </div>
           </article>
         `;
@@ -2272,7 +2529,9 @@ function bindHomePage() {
   const savedRoot = document.querySelector('[data-saved-root]');
   const savedEmpty = document.querySelector('[data-saved-empty]');
   const savedCount = document.querySelector('[data-saved-count]');
-  const collectionBodies = new Map(Array.from(document.querySelectorAll('[data-home-body]')).map((node) => [node.dataset.homeBody, node]));
+  const collectionBodies = new Map(
+    Array.from(document.querySelectorAll('[data-home-body]')).map((node) => [node.dataset.homeBody, node]),
+  );
   const collectionToggles = new Map();
   const cardMap = new Map();
 
@@ -2370,7 +2629,14 @@ function bindHomePage() {
             </div>
             <div class="reveal-actions">
               <a class="button" href="${escapeHtml(card.url)}">Open</a>
-              <button class="button-secondary" type="button" data-unsave-button data-key="${escapeHtml(key)}">Remove</button>
+              <button
+                class="button-secondary"
+                type="button"
+                data-unsave-button
+                data-key="${escapeHtml(key)}"
+              >
+                Remove
+              </button>
             </div>
           </article>
         `;
@@ -2401,6 +2667,21 @@ function bindHomePage() {
   });
 }
 
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) {
+    return;
+  }
+
+  if (!window.isSecureContext) {
+    console.info('Service worker registration requires HTTPS or localhost.');
+    return;
+  }
+
+  navigator.serviceWorker.register('/_static/sw.js').catch((error) => {
+    console.warn('Service worker registration failed:', error);
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const init = async () => {
     hydratePersistentStateFromBoot();
@@ -2415,6 +2696,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindCardPage();
     bindPlaygroundPanel();
     bindNotePanel();
+    registerServiceWorker();
   };
 
   init();
@@ -2677,7 +2959,10 @@ def notebook_payload(notebook: Notebook) -> Dict[str, object]:
     }
 
 
-def boot_payload(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+def boot_payload(
+    notebooks: Sequence[Notebook],
+    persistent_state: Optional[Dict[str, object]] = None,
+) -> Dict[str, object]:
     return {
         "notebooks": [notebook_payload(notebook) for notebook in notebooks],
         "persistentState": persistent_state or {"saved_cards": [], "notebooks": {}, "notes": {}},
@@ -2738,7 +3023,10 @@ def compile_cpp_submission(source: str, stdin_data: str = "", language: str = CP
                 "compiled": False,
                 "compile_returncode": None,
                 "compile_stdout": truncate_text(exc.stdout or ""),
-                "compile_stderr": truncate_text((exc.stderr or "") + f"\nCompilation timed out after {COMPILE_TIMEOUT_SECONDS} seconds."),
+                "compile_stderr": truncate_text(
+                    (exc.stderr or "")
+                    + f"\nCompilation timed out after {COMPILE_TIMEOUT_SECONDS} seconds."
+                ),
                 "run_returncode": None,
                 "run_stdout": "",
                 "run_stderr": "",
@@ -2829,14 +3117,29 @@ def decode_data_url(data_url: str) -> Tuple[bytes, str]:
 
 
 def note_attachment_dir(state_dir: Path, notebook_slug: str, card_id: str) -> Path:
-    return state_dir / "note-attachments" / safe_slug_path_component(notebook_slug) / safe_slug_path_component(str(card_id))
+    return (
+        state_dir
+        / "note-attachments"
+        / safe_slug_path_component(notebook_slug)
+        / safe_slug_path_component(str(card_id))
+    )
 
 
 def note_attachment_url(notebook_slug: str, card_id: str, filename: str) -> str:
-    return f"/_attachments/{safe_slug_path_component(notebook_slug)}/{safe_slug_path_component(str(card_id))}/{filename}"
+    return (
+        f"/_attachments/{safe_slug_path_component(notebook_slug)}"
+        f"/{safe_slug_path_component(str(card_id))}/{filename}"
+    )
 
 
-def save_note_attachment_file(state_dir: Path, notebook_slug: str, card_id: str, filename: str, data: bytes, mime_type: str) -> Dict[str, object]:
+def save_note_attachment_file(
+    state_dir: Path,
+    notebook_slug: str,
+    card_id: str,
+    filename: str,
+    data: bytes,
+    mime_type: str,
+) -> Dict[str, object]:
     if len(data) > MAX_NOTE_ATTACHMENT_BYTES:
         raise ValueError(
             f"Attachment too large; limit is {MAX_NOTE_ATTACHMENT_BYTES} bytes.")
@@ -2910,7 +3213,15 @@ def render_page(title: str, body: str, extra_head: str = "", boot_data: Optional
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="{PWA_THEME_COLOR}">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="{html.escape(PWA_SHORT_NAME, quote=True)}">
   <title>{html.escape(title)}</title>
+  <link rel="manifest" href="{PWA_MANIFEST_PATH}">
+  <link rel="apple-touch-icon" href="{PWA_ICON_180_PATH}">
+  <link rel="icon" type="image/png" sizes="180x180" href="{PWA_ICON_180_PATH}">
+  <link rel="icon" type="image/png" sizes="512x512" href="{PWA_ICON_512_PATH}">
   <link rel="stylesheet" href="/_static/app.css">
   {extra_head}
 </head>
@@ -2928,7 +3239,8 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
     for notebook in notebooks:
         card_count = len(notebook.cards)
         for card in notebook.cards:
-            card_lookup[f"{notebook.spec.slug}:{card.number}"] = (notebook, card)
+            card_lookup[f"{notebook.spec.slug}:{card.number}"] = (
+                notebook, card)
         tiles.append(
             f"""
             <a class="card-tile" href="{overview_url(notebook)}">
@@ -2948,7 +3260,8 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
         )
 
     saved_entries = []
-    saved_state_root = (persistent_state or {}).get("saved_cards", []) if persistent_state else []
+    saved_state_root = (persistent_state or {}).get(
+        "saved_cards", []) if persistent_state else []
     if isinstance(saved_state_root, list):
         for key in saved_state_root:
             pair = card_lookup.get(str(key))
@@ -2969,7 +3282,14 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
                   </div>
                   <div class="reveal-actions">
                     <a class="button" href="{card_url(notebook, card)}">Open</a>
-                    <button class="button-secondary" type="button" data-unsave-button data-key="{html.escape(str(key), quote=True)}">Remove</button>
+                    <button
+                      class="button-secondary"
+                      type="button"
+                      data-unsave-button
+                      data-key="{html.escape(str(key), quote=True)}"
+                    >
+                      Remove
+                    </button>
                   </div>
                 </article>
                 """
@@ -3056,11 +3376,15 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
             <span class="muted"><strong data-saved-count>{len(saved_entries)}</strong> saved</span>
           </div>
           <div class="home-collection-actions">
-            <button class="button-secondary" type="button" data-home-toggle="saved" data-home-collapsed>展开</button>
+            <button class="button-secondary" type="button" data-home-toggle="saved" data-home-collapsed>
+              展开
+            </button>
           </div>
         </div>
         <div class="home-collection-body" data-home-body="saved" hidden>
-          <p class="saved-empty" data-saved-empty {'hidden' if saved_entries else ''}>你还没有保存任何题目。点开题目页里的 SAVE 就会出现在这里。</p>
+          <p class="saved-empty" data-saved-empty {'hidden' if saved_entries else ''}>
+            你还没有保存任何题目。点开题目页里的 SAVE 就会出现在这里。
+          </p>
           <div class="overview-grid saved-grid" data-saved-root>{''.join(saved_entries)}</div>
         </div>
       </section>
@@ -3095,7 +3419,15 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
             [card.title, card.preview, " ".join(card.labels)])
         cards.append(
             f"""
-            <a class="question-cell is-new" data-question-cell data-card-id="{card.number}" data-search-text="{html.escape(search_text, quote=True)}" href="{card_url(notebook, card)}" aria-label="{html.escape(card.title, quote=True)}" title="{html.escape(card.title, quote=True)}">
+            <a
+              class="question-cell is-new"
+              data-question-cell
+              data-card-id="{card.number}"
+              data-search-text="{html.escape(search_text, quote=True)}"
+              href="{card_url(notebook, card)}"
+              aria-label="{html.escape(card.title, quote=True)}"
+              title="{html.escape(card.title, quote=True)}"
+            >
               {card.number:02d}
             </a>
             """
@@ -3107,7 +3439,12 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
             [card.title, card.preview, " ".join(card.labels)])
         tiles.append(
             f"""
-            <a class="card-tile" data-card-tile data-search-text="{html.escape(search_text, quote=True)}" href="{card_url(notebook, card)}">
+            <a
+              class="card-tile"
+              data-card-tile
+              data-search-text="{html.escape(search_text, quote=True)}"
+              href="{card_url(notebook, card)}"
+            >
               <div class="card-meta">
                 <span class="card-number">{card.number:02d}</span>
                 <span>{len(card.sections)} sections</span>
@@ -3146,7 +3483,13 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
       </div>
 
       <div class="toolbar">
-        <input class="search" data-card-search type="search" placeholder="搜索题目、关键词、section..." aria-label="Search cards">
+        <input
+          class="search"
+          data-card-search
+          type="search"
+          placeholder="搜索题目、关键词、section..."
+          aria-label="Search cards"
+        >
         <a class="button" data-resume-button href="#" hidden>继续上次学习</a>
         <button class="button-secondary" data-clear-button type="button">清空搜索</button>
       </div>
@@ -3161,7 +3504,11 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
           <span class="muted">Quick jump grid</span>
           <span class="muted"><span data-progress-label>0 visited</span> · <span data-today-label>0 today</span></span>
         </div>
-        <div class="question-grid" data-overview-root data-notebook-slug="{html.escape(notebook.spec.slug, quote=True)}">
+        <div
+          class="question-grid"
+          data-overview-root
+          data-notebook-slug="{html.escape(notebook.spec.slug, quote=True)}"
+        >
           {''.join(cards)}
         </div>
       </section>
@@ -3189,7 +3536,11 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
         <section class="answer-section{' is-english' if section.title.lower() == 'english explanation' else ''}">
           <div class="section-head">
             <h2>{html.escape(section.title)}</h2>
-            {'<span class="tag">For English interviews</span>' if section.title.lower() == 'english explanation' else ''}
+            {
+              '<span class="tag">For English interviews</span>'
+              if section.title.lower() == 'english explanation'
+              else ''
+            }
           </div>
           <div class="section-body">
             {section.html}
@@ -3221,7 +3572,13 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
       </section>
 
       <div class="card-workspace">
-        <article class="panel flashcard card-main" data-card-root data-notebook-slug="{html.escape(notebook.spec.slug, quote=True)}" data-card-id="{card.number}" data-reveal-key="flashcards:{html.escape(notebook.spec.slug, quote=True)}:reveal:{card.number}">
+        <article
+          class="panel flashcard card-main"
+          data-card-root
+          data-notebook-slug="{html.escape(notebook.spec.slug, quote=True)}"
+          data-card-id="{card.number}"
+          data-reveal-key="flashcards:{html.escape(notebook.spec.slug, quote=True)}:reveal:{card.number}"
+        >
           <div class="question-block">
             <div class="question-number">Question {card.number:02d}</div>
             <h1>{html.escape(card.title)}</h1>
@@ -3233,7 +3590,14 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
               <button class="button-secondary" type="button" data-playground-open>RUN C++</button>
               <button class="button-secondary" type="button" data-note-toggle>My Note</button>
               <a class="button-secondary" href="{overview_url(notebook)}">返回总览</a>
-              <a class="button-secondary" href="{random_url(notebook)}" data-random-button data-target="{random_url(notebook)}">随机题</a>
+              <a
+                class="button-secondary"
+                href="{random_url(notebook)}"
+                data-random-button
+                data-target="{random_url(notebook)}"
+              >
+                随机题
+              </a>
             </div>
           </div>
 
@@ -3241,11 +3605,18 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
             {answer_sections}
           </div>
 
-          <section class="note-panel" data-note-root data-notebook-slug="{html.escape(notebook.spec.slug, quote=True)}" data-card-id="{card.number}">
+          <section
+            class="note-panel"
+            data-note-root
+            data-notebook-slug="{html.escape(notebook.spec.slug, quote=True)}"
+            data-card-id="{card.number}"
+          >
             <div class="note-panel-head">
               <div>
                 <div class="note-title">My Note</div>
-                <div class="note-subtitle">Paste text, screenshots, or images. `Ctrl+V` works when the editor is focused.</div>
+                <div class="note-subtitle">
+                  Paste text, screenshots, or images. `Ctrl+V` works when the editor is focused.
+                </div>
               </div>
               <div class="note-head-actions">
                 <span class="note-status" data-note-status>Draft</span>
@@ -3255,7 +3626,12 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
             </div>
 
             <div class="note-body" data-note-body hidden>
-              <textarea class="note-editor" data-note-text spellcheck="false" placeholder="Write markdown notes here. Paste text or screenshots with Ctrl+V."></textarea>
+              <textarea
+                class="note-editor"
+                data-note-text
+                spellcheck="false"
+                placeholder="Write markdown notes here. Paste text or screenshots with Ctrl+V."
+              ></textarea>
 
               <div class="reveal-actions note-actions">
                 <button class="button-secondary" type="button" data-note-clear>Clear note</button>
@@ -3275,8 +3651,16 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
           </section>
 
           <div class="reveal-actions">
-            {'<a class="button-secondary" href="' + card_url(notebook, previous_card) + '">上一题</a>' if previous_card else '<span class="button-secondary" aria-disabled="true">上一题</span>'}
-            {'<a class="button-secondary" href="' + card_url(notebook, next_card) + '">下一题</a>' if next_card else '<span class="button-secondary" aria-disabled="true">下一题</span>'}
+            {
+              '<a class="button-secondary" href="' + card_url(notebook, previous_card) + '">上一题</a>'
+              if previous_card
+              else '<span class="button-secondary" aria-disabled="true">上一题</span>'
+            }
+            {
+              '<a class="button-secondary" href="' + card_url(notebook, next_card) + '">下一题</a>'
+              if next_card
+              else '<span class="button-secondary" aria-disabled="true">下一题</span>'
+            }
             <a class="button-secondary" href="{random_url(notebook)}">换一题</a>
           </div>
         </article>
@@ -3308,10 +3692,27 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
             </div>
 
             <label class="playground-label" for="playground-source">Code</label>
-            <textarea id="playground-source" class="playground-editor" data-playground-source spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"></textarea>
+            <textarea
+              id="playground-source"
+              class="playground-editor"
+              data-playground-source
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+            ></textarea>
 
             <label class="playground-label" for="playground-stdin">stdin</label>
-            <textarea id="playground-stdin" class="playground-stdin" data-playground-stdin spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="Optional standard input"></textarea>
+            <textarea
+              id="playground-stdin"
+              class="playground-stdin"
+              data-playground-stdin
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              placeholder="Optional standard input"
+            ></textarea>
 
             <div class="playground-output-grid">
               <section class="playground-section">
@@ -3330,7 +3731,11 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
       </div>
     </div>
     """
-    return render_page(f"{notebook.spec.title} - {card.title}", body, boot_data=boot_payload([notebook], persistent_state))
+    return render_page(
+        f"{notebook.spec.title} - {card.title}",
+        body,
+        boot_data=boot_payload([notebook], persistent_state),
+    )
 
 
 class FlashcardServer(BaseHTTPRequestHandler):
@@ -3361,6 +3766,30 @@ class FlashcardServer(BaseHTTPRequestHandler):
 
         if route == "/_api/state":
             self.send_json(self.state_store.snapshot(), send_body=send_body)
+            return
+
+        if route == PWA_MANIFEST_PATH:
+            self.send_text(
+                json.dumps(PWA_MANIFEST, ensure_ascii=False),
+                "application/manifest+json; charset=utf-8",
+                send_body=send_body,
+            )
+            return
+
+        if route == PWA_SERVICE_WORKER_PATH:
+            self.send_text(
+                build_service_worker_js(),
+                "application/javascript; charset=utf-8",
+                send_body=send_body,
+            )
+            return
+
+        if route == PWA_ICON_180_PATH:
+            self.send_bytes(PWA_ICON_180_PNG, "image/png", send_body=send_body)
+            return
+
+        if route == PWA_ICON_512_PATH:
+            self.send_bytes(PWA_ICON_512_PNG, "image/png", send_body=send_body)
             return
 
         if route in {"/_static/app.css", "/static/app.css"}:
@@ -3644,6 +4073,14 @@ class FlashcardServer(BaseHTTPRequestHandler):
 
     def send_text(self, content: str, content_type: str, status: int = 200, send_body: bool = True) -> None:
         payload = content.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        if send_body:
+            self.wfile.write(payload)
+
+    def send_bytes(self, payload: bytes, content_type: str, status: int = 200, send_body: bool = True) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))

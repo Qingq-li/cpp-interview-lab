@@ -49,6 +49,13 @@ python3 tools/flashcards_app.py
 每个 notebook 还有题号网格快速跳转、今日访问高亮、以及 `SAVE` 收藏区。
 题目页里还可以直接写 `My Note`，支持文字和粘贴截图/图片，内容会持久化到 `./data/`。
 
+它也带了 iPhone 可安装的网页应用配置：
+- 在 iPhone Safari 里打开页面
+- 点分享按钮，选择“添加到主屏幕”
+- 之后可以像独立 app 一样从桌面启动
+
+注意：如果你用的是局域网 `http://<ip>:8000`，iOS 仍然可以添加到主屏幕，但真正的 service worker 缓存和更完整的 PWA 体验通常需要 `HTTPS` 或 `localhost`。如果你需要离线/更完整的 app 体验，建议再套一层 HTTPS 反代。
+
 ## Docker 部署
 
 仓库里已经补了可同时支持 `x86_64/amd64` 和 `arm64` 的容器配置。

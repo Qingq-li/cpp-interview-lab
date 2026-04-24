@@ -4,12 +4,16 @@ from tempfile import TemporaryDirectory
 
 from tools.flashcards_app import (
     build_notebooks,
+    build_pwa_icon_png,
+    build_service_worker_js,
     compile_cpp_submission,
     boot_payload,
     PersistentStateStore,
+    PWA_MANIFEST,
     save_note_attachment_file,
     render_card_page,
     render_markdown,
+    render_page,
     render_overview,
 )
 
@@ -72,6 +76,23 @@ int main() {}
         self.assertIn("saved_cards", payload["persistentState"])
         self.assertIn("notebooks", payload["persistentState"])
         self.assertIn("notes", payload["persistentState"])
+
+    def test_pwa_assets_are_generated(self):
+        html = render_page("demo", "<main></main>", boot_data=boot_payload([self.beginner]))
+        self.assertIn('rel="manifest"', html)
+        self.assertIn('apple-touch-icon', html)
+        self.assertIn("apple-mobile-web-app-capable", html)
+
+        manifest = PWA_MANIFEST
+        self.assertEqual("standalone", manifest["display"])
+        self.assertIn("icons", manifest)
+
+        sw = build_service_worker_js()
+        self.assertIn("CACHE_NAME", sw)
+        self.assertIn("self.addEventListener('fetch'", sw)
+
+        icon = build_pwa_icon_png(180)
+        self.assertTrue(icon.startswith(b"\x89PNG\r\n\x1a\n"))
 
     def test_note_state_roundtrip(self):
         with TemporaryDirectory() as tmpdir:
