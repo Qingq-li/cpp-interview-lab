@@ -1,0 +1,3 @@
+services:
+  cpp-interview-lab:
+    platform: linux/arm64

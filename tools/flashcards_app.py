@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import base64
+import cgi
 import argparse
 import html
 import json
 import os
+import mimetypes
 import random
 import re
 import signal
 import sys
 import subprocess
+import threading
+import uuid
 import webbrowser
+from datetime import datetime
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -142,6 +148,159 @@ MAX_SOURCE_CHARS = 200_000
 COMPILE_TIMEOUT_SECONDS = 10
 RUN_TIMEOUT_SECONDS = 3
 MAX_CAPTURED_OUTPUT_CHARS = 20_000
+MAX_NOTE_TEXT_CHARS = 100_000
+MAX_NOTE_ATTACHMENT_BYTES = 8 * 1024 * 1024
+DEFAULT_STATE_DIR = Path(os.environ.get("FLASHCARDS_STATE_DIR", ROOT / "data"))
+STATE_FILE_NAME = "flashcards-state.json"
+
+
+class PersistentStateStore:
+    def __init__(self, state_dir: Path) -> None:
+        self.state_dir = state_dir
+        self.state_path = state_dir / STATE_FILE_NAME
+        self._lock = threading.Lock()
+        self._state = self._load()
+
+    def _default_state(self) -> Dict[str, object]:
+        return {
+            "saved_cards": [],
+            "notebooks": {},
+            "notes": {},
+        }
+
+    def _load(self) -> Dict[str, object]:
+        try:
+            raw = self.state_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return self._default_state()
+        except OSError:
+            return self._default_state()
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return self._default_state()
+
+        if not isinstance(data, dict):
+            return self._default_state()
+
+        saved_cards = data.get("saved_cards", [])
+        notebooks = data.get("notebooks", {})
+        notes = data.get("notes", {})
+        if not isinstance(saved_cards, list):
+            saved_cards = []
+        if not isinstance(notebooks, dict):
+            notebooks = {}
+        if not isinstance(notes, dict):
+            notes = {}
+        return {
+            "saved_cards": [str(entry) for entry in saved_cards],
+            "notebooks": {
+                str(slug): self._normalize_notebook_state(state)
+                for slug, state in notebooks.items()
+                if isinstance(state, dict)
+            },
+            "notes": {
+                str(slug): {
+                    str(card_id): self._normalize_note_state(note_state)
+                    for card_id, note_state in cards.items()
+                    if isinstance(note_state, dict)
+                }
+                for slug, cards in notes.items()
+                if isinstance(cards, dict)
+            },
+        }
+
+    @staticmethod
+    def _normalize_notebook_state(state: Dict[str, object]) -> Dict[str, object]:
+        viewed = state.get("viewed", {})
+        if isinstance(viewed, list):
+            viewed = {str(card_id): "" for card_id in viewed}
+        elif not isinstance(viewed, dict):
+            viewed = {}
+        revealed = state.get("revealed", [])
+        if not isinstance(revealed, list):
+            revealed = []
+        last_card = state.get("lastCard", "")
+        if not isinstance(last_card, str):
+            last_card = ""
+        return {
+            "viewed": {str(card_id): str(value) for card_id, value in viewed.items()},
+            "revealed": [str(entry) for entry in revealed],
+            "lastCard": last_card,
+        }
+
+    @staticmethod
+    def _normalize_note_state(state: Dict[str, object]) -> Dict[str, object]:
+        text = state.get("text", "")
+        if not isinstance(text, str):
+            text = ""
+        updated_at = state.get("updatedAt", "")
+        if not isinstance(updated_at, str):
+            updated_at = ""
+        attachments = state.get("attachments", [])
+        if not isinstance(attachments, list):
+            attachments = []
+        normalized_attachments = []
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            attachment_id = attachment.get("id", "")
+            if not isinstance(attachment_id, str) or not attachment_id:
+                continue
+            normalized_attachments.append(
+                {
+                    "id": attachment_id,
+                    "filename": attachment.get("filename", "") if isinstance(attachment.get("filename", ""), str) else "",
+                    "url": attachment.get("url", "") if isinstance(attachment.get("url", ""), str) else "",
+                    "mimeType": attachment.get("mimeType", "") if isinstance(attachment.get("mimeType", ""), str) else "",
+                    "createdAt": attachment.get("createdAt", "") if isinstance(attachment.get("createdAt", ""), str) else "",
+                    "size": int(attachment.get("size", 0)) if isinstance(attachment.get("size", 0), int) else 0,
+                }
+            )
+        return {
+            "text": text,
+            "attachments": normalized_attachments,
+            "updatedAt": updated_at,
+        }
+
+    def snapshot(self) -> Dict[str, object]:
+        with self._lock:
+            return json.loads(json.dumps(self._state))
+
+    def save_saved_cards(self, saved_cards: Sequence[str]) -> None:
+        with self._lock:
+            self._state["saved_cards"] = [str(entry) for entry in saved_cards]
+            self._persist()
+
+    def save_notebook_state(self, notebook_slug: str, state: Dict[str, object]) -> None:
+        with self._lock:
+            notebooks = self._state.setdefault("notebooks", {})
+            if not isinstance(notebooks, dict):
+                notebooks = {}
+                self._state["notebooks"] = notebooks
+            notebooks[str(notebook_slug)] = self._normalize_notebook_state(state)
+            self._persist()
+
+    def save_note_state(self, notebook_slug: str, card_id: str, note_state: Dict[str, object]) -> None:
+        with self._lock:
+            notes = self._state.setdefault("notes", {})
+            if not isinstance(notes, dict):
+                notes = {}
+                self._state["notes"] = notes
+            notebook_notes = notes.setdefault(str(notebook_slug), {})
+            if not isinstance(notebook_notes, dict):
+                notebook_notes = {}
+                notes[str(notebook_slug)] = notebook_notes
+            notebook_notes[str(card_id)] = self._normalize_note_state(note_state)
+            self._persist()
+
+    def _persist(self) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(self._state, ensure_ascii=False, indent=2, sort_keys=True)
+        tmp_path = self.state_path.with_suffix(".tmp")
+        tmp_path.write_text(payload, encoding="utf-8")
+        tmp_path.replace(self.state_path)
 
 
 APP_CSS = """
@@ -791,6 +950,189 @@ a:hover {
   font-weight: 800;
 }
 
+.note-panel {
+  margin-top: 18px;
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  border-radius: 20px;
+  background: rgba(255, 250, 243, 0.9);
+  box-shadow: 0 12px 28px rgba(73, 51, 30, 0.08);
+  overflow: hidden;
+}
+
+.note-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  background: rgba(15, 118, 110, 0.05);
+  border-bottom: 1px solid rgba(15, 118, 110, 0.08);
+}
+
+.note-title {
+  font-weight: 800;
+  font-size: 1.02rem;
+  color: var(--accent);
+}
+
+.note-subtitle {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.note-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.note-status,
+.note-count {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.note-body {
+  padding: 16px 18px 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.note-body[hidden] {
+  display: none;
+}
+
+.note-editor {
+  width: 100%;
+  min-height: 180px;
+  border: 1px solid rgba(81, 67, 57, 0.16);
+  border-radius: 16px;
+  padding: 14px;
+  resize: vertical;
+  background: #fffdf8;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.note-actions {
+  margin-top: 0;
+}
+
+.note-preview-shell,
+.note-attachments-shell {
+  border: 1px solid rgba(81, 67, 57, 0.12);
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(255, 250, 243, 0.88);
+}
+
+.note-section-head {
+  padding: 12px 14px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-2);
+  background: rgba(180, 83, 9, 0.06);
+  border-bottom: 1px solid rgba(180, 83, 9, 0.08);
+}
+
+.note-preview {
+  padding: 14px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.note-empty {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.note-image {
+  margin: 0 0 14px;
+}
+
+.note-image img,
+.note-attachment-preview {
+  display: block;
+  max-width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(81, 67, 57, 0.14);
+}
+
+.note-image figcaption {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.note-attachments {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.note-attachment-card {
+  border: 1px solid rgba(81, 67, 57, 0.12);
+  border-radius: 16px;
+  padding: 12px;
+  background: #fffdf8;
+  display: grid;
+  gap: 10px;
+}
+
+.note-attachment-top {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.note-attachment-preview {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  background: #f5f0e5;
+}
+
+.note-file-icon {
+  width: 72px;
+  height: 72px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.note-attachment-meta {
+  min-width: 0;
+}
+
+.note-attachment-name {
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.note-attachment-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.note-attachment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .muted {
   color: var(--muted);
 }
@@ -878,6 +1220,20 @@ a:hover {
   .playground-shell {
     border-radius: 24px 24px 0 0;
   }
+
+  .note-panel-head,
+  .note-attachment-top {
+    align-items: flex-start;
+  }
+
+  .note-head-actions,
+  .note-attachment-actions {
+    width: 100%;
+  }
+
+  .note-editor {
+    min-height: 160px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -931,10 +1287,67 @@ function todayStamp() {
 function getBootData() {
   const node = document.getElementById('flashcards-data');
   if (!node) {
-    return { notebooks: [] };
+    return { notebooks: [], persistentState: { saved_cards: [], notebooks: {}, notes: {} } };
   }
 
-  return safeJsonParse(node.textContent || node.innerText || '{}', { notebooks: [] }) || { notebooks: [] };
+  return safeJsonParse(node.textContent || node.innerText || '{}', {
+    notebooks: [],
+    persistentState: { saved_cards: [], notebooks: {}, notes: {} },
+  }) || { notebooks: [], persistentState: { saved_cards: [], notebooks: {}, notes: {} } };
+}
+
+function getBootPersistentState() {
+  const boot = getBootData();
+  const persistentState = boot.persistentState || {};
+  return {
+    saved_cards: Array.isArray(persistentState.saved_cards) ? persistentState.saved_cards : [],
+    notebooks: persistentState.notebooks && typeof persistentState.notebooks === 'object' ? persistentState.notebooks : {},
+    notes: persistentState.notes && typeof persistentState.notes === 'object' ? persistentState.notes : {},
+  };
+}
+
+function hydratePersistentStateFromBoot() {
+  const persistentState = getBootPersistentState();
+  localStorage.setItem(getStoreKey('saved'), JSON.stringify(persistentState.saved_cards || []));
+  Object.entries(persistentState.notebooks || {}).forEach(([slug, state]) => {
+    localStorage.setItem(getStoreKey(`notebook:${slug}`), JSON.stringify(state));
+  });
+  Object.entries(persistentState.notes || {}).forEach(([slug, cards]) => {
+    Object.entries(cards || {}).forEach(([cardId, noteState]) => {
+      localStorage.setItem(getStoreKey(`note:${slug}:${cardId}`), JSON.stringify(noteState));
+    });
+  });
+}
+
+async function refreshPersistentStateFromServer() {
+  const response = await fetch('/_api/state', { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Failed to load persistent state: ${response.status}`);
+  }
+
+  const snapshot = await response.json();
+  const savedCards = Array.isArray(snapshot.saved_cards) ? snapshot.saved_cards : [];
+  const notebooks = snapshot.notebooks && typeof snapshot.notebooks === 'object' ? snapshot.notebooks : {};
+  const notes = snapshot.notes && typeof snapshot.notes === 'object' ? snapshot.notes : {};
+
+  localStorage.setItem(getStoreKey('saved'), JSON.stringify(savedCards));
+
+  Object.keys(localStorage).forEach((key) => {
+    if (!key.startsWith(getStoreKey('notebook:')) && !key.startsWith(getStoreKey('note:'))) {
+      return;
+    }
+    localStorage.removeItem(key);
+  });
+
+  Object.entries(notebooks).forEach(([slug, state]) => {
+    localStorage.setItem(getStoreKey(`notebook:${slug}`), JSON.stringify(state));
+  });
+
+  Object.entries(notes).forEach(([slug, cards]) => {
+    Object.entries(cards || {}).forEach(([cardId, noteState]) => {
+      localStorage.setItem(getStoreKey(`note:${slug}:${cardId}`), JSON.stringify(noteState));
+    });
+  });
 }
 
 function getStoreKey(scope) {
@@ -962,6 +1375,7 @@ function getNotebookState(notebookSlug) {
 
 function saveNotebookState(notebookSlug, state) {
   localStorage.setItem(getStoreKey(`notebook:${notebookSlug}`), JSON.stringify(state));
+  syncPersistentState('notebook', { notebookSlug, state });
 }
 
 function getSavedCards() {
@@ -972,6 +1386,46 @@ function getSavedCards() {
 
 function saveSavedCards(savedCards) {
   localStorage.setItem(getStoreKey('saved'), JSON.stringify(savedCards));
+  syncPersistentState('saved_cards', { savedCards });
+}
+
+function noteKey(notebookSlug, cardId) {
+  return `note:${notebookSlug}:${cardId}`;
+}
+
+function getNoteState(notebookSlug, cardId) {
+  const raw = localStorage.getItem(getStoreKey(noteKey(notebookSlug, cardId)));
+  const state = safeJsonParse(raw, null) || {};
+  state.text = typeof state.text === 'string' ? state.text : '';
+  state.updatedAt = typeof state.updatedAt === 'string' ? state.updatedAt : '';
+  state.open = Boolean(state.open);
+  state.attachments = Array.isArray(state.attachments) ? state.attachments : [];
+  state.attachments = state.attachments
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry) => ({
+      id: typeof entry.id === 'string' ? entry.id : '',
+      filename: typeof entry.filename === 'string' ? entry.filename : '',
+      url: typeof entry.url === 'string' ? entry.url : '',
+      mimeType: typeof entry.mimeType === 'string' ? entry.mimeType : '',
+      createdAt: typeof entry.createdAt === 'string' ? entry.createdAt : '',
+      size: Number.isInteger(entry.size) ? entry.size : 0,
+      storedName: typeof entry.storedName === 'string' ? entry.storedName : '',
+    }))
+    .filter((entry) => entry.id && entry.url);
+  return state;
+}
+
+function saveNoteState(notebookSlug, cardId, state) {
+  localStorage.setItem(getStoreKey(noteKey(notebookSlug, cardId)), JSON.stringify(state));
+  syncPersistentState('note', { notebookSlug, cardId: String(cardId), noteState: state });
+}
+
+function syncPersistentState(kind, payload) {
+  fetch('/_api/state', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, ...payload }),
+  }).catch(() => {});
 }
 
 function cardKey(notebookSlug, cardId) {
@@ -1459,6 +1913,334 @@ function bindPlaygroundPanel() {
   setOutput(state.lastResult);
 }
 
+function escapeRegExp(value) {
+  const slash = String.fromCharCode(92);
+  return String(value)
+    .split(slash).join(slash + slash)
+    .split('.').join(slash + '.')
+    .split('*').join(slash + '*')
+    .split('+').join(slash + '+')
+    .split('?').join(slash + '?')
+    .split('^').join(slash + '^')
+    .split('$').join(slash + '$')
+    .split('{').join(slash + '{')
+    .split('}').join(slash + '}')
+    .split('(').join(slash + '(')
+    .split(')').join(slash + ')')
+    .split('|').join(slash + '|')
+    .split('[').join(slash + '[')
+    .split(']').join(slash + ']');
+}
+
+function renderNotePreview(text) {
+  const escaped = escapeHtml(text || '');
+  if (!escaped.trim()) {
+    return '<div class="note-empty">Paste text or screenshots here. `Ctrl+V` works when the note editor is focused.</div>';
+  }
+
+  let htmlText = escaped;
+  htmlText = htmlText.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
+    const safeAlt = escapeHtml(alt || '');
+    return `<figure class="note-image"><img src="${escapeHtml(url)}" alt="${safeAlt}"><figcaption>${safeAlt || 'image'}</figcaption></figure>`;
+  });
+  htmlText = htmlText.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url) => `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${label}</a>`);
+  return htmlText.split(String.fromCharCode(10)).join('<br>');
+}
+
+function insertTextAtCursor(textarea, text) {
+  if (!textarea) {
+    return;
+  }
+
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
+  const before = textarea.value.slice(0, start);
+  const after = textarea.value.slice(end);
+  textarea.value = `${before}${text}${after}`;
+  const cursor = start + text.length;
+  textarea.selectionStart = cursor;
+  textarea.selectionEnd = cursor;
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadNoteAttachment(notebookSlug, cardId, file) {
+  const dataUrl = await fileToDataUrl(file);
+  const response = await fetch('/_api/note-attachment', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      notebookSlug,
+      cardId: String(cardId),
+      filename: file.name || 'paste.png',
+      dataUrl,
+    }),
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    throw new Error(result && result.error ? result.error : 'Upload failed.');
+  }
+  return result.attachment;
+}
+
+async function deleteNoteAttachment(notebookSlug, cardId, attachmentUrl) {
+  const response = await fetch('/_api/note-attachment-delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      notebookSlug,
+      cardId: String(cardId),
+      attachmentUrl,
+    }),
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    throw new Error(result && result.error ? result.error : 'Delete failed.');
+  }
+}
+
+function bindNotePanel() {
+  const root = document.querySelector('[data-note-root]');
+  if (!root) {
+    return;
+  }
+
+  const notebookSlug = root.dataset.notebookSlug;
+  const cardId = root.dataset.cardId;
+  const storageKey = getStoreKey(noteKey(notebookSlug, cardId));
+  const state = getNoteState(notebookSlug, cardId);
+  const noteBody = root.querySelector('[data-note-body]');
+  const toggleButtons = Array.from(document.querySelectorAll('[data-note-toggle]'));
+  const clearButton = root.querySelector('[data-note-clear]');
+  const collapseButton = root.querySelector('[data-note-collapse]');
+  const textarea = root.querySelector('[data-note-text]');
+  const preview = root.querySelector('[data-note-preview]');
+  const attachmentList = root.querySelector('[data-note-attachments]');
+  const countLabel = root.querySelector('[data-note-count]');
+  const statusLabel = root.querySelector('[data-note-status]');
+
+  let syncTimer = null;
+  state.open = Boolean(state.open || state.text.trim() || state.attachments.length);
+
+  const persist = (immediate = false) => {
+    localStorage.setItem(storageKey, JSON.stringify(state));
+    if (syncTimer) {
+      clearTimeout(syncTimer);
+      syncTimer = null;
+    }
+    if (immediate) {
+      syncPersistentState('note', { notebookSlug, cardId: String(cardId), noteState: state });
+    } else {
+      syncTimer = window.setTimeout(() => {
+        syncPersistentState('note', { notebookSlug, cardId: String(cardId), noteState: state });
+      }, 450);
+    }
+    if (statusLabel) {
+      statusLabel.textContent = state.updatedAt ? `Saved ${state.updatedAt.replace('T', ' ').slice(0, 19)}` : 'Draft';
+    }
+  };
+
+  const syncEditorValue = () => {
+    if (textarea && textarea.value !== state.text) {
+      textarea.value = state.text;
+    }
+  };
+
+  const renderAttachments = () => {
+    if (!attachmentList) {
+      return;
+    }
+
+    if (!state.attachments.length) {
+      attachmentList.innerHTML = '<div class="note-empty">No attachments yet.</div>';
+      if (countLabel) {
+        countLabel.textContent = '0';
+      }
+      return;
+    }
+
+    attachmentList.innerHTML = state.attachments
+      .map((attachment) => {
+        const isImage = (attachment.mimeType || '').startsWith('image/');
+        const previewHtml = isImage
+          ? `<img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.filename || 'attachment')}" class="note-attachment-preview">`
+          : `<span class="note-file-icon">FILE</span>`;
+        return `
+          <article class="note-attachment-card" data-attachment-id="${escapeHtml(attachment.id)}">
+            <div class="note-attachment-top">
+              ${previewHtml}
+              <div class="note-attachment-meta">
+                <div class="note-attachment-name">${escapeHtml(attachment.filename || 'attachment')}</div>
+                <div class="note-attachment-sub">${escapeHtml(attachment.mimeType || '')}</div>
+              </div>
+            </div>
+            <div class="note-attachment-actions">
+              <a class="button-secondary" href="${escapeHtml(attachment.url)}" target="_blank" rel="noreferrer">Open</a>
+              <button class="button-secondary" type="button" data-note-delete-attachment data-attachment-url="${escapeHtml(attachment.url)}">Delete</button>
+            </div>
+          </article>
+        `;
+      })
+      .join('');
+
+    attachmentList.querySelectorAll('[data-note-delete-attachment]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const attachmentUrl = button.dataset.attachmentUrl || '';
+        if (!attachmentUrl) {
+          return;
+        }
+
+        button.disabled = true;
+        try {
+          await deleteNoteAttachment(notebookSlug, cardId, attachmentUrl);
+          state.attachments = state.attachments.filter((item) => item.url !== attachmentUrl);
+          state.text = state.text
+            .replace(new RegExp(`!\\[[^\\]]*\\]\\(${escapeRegExp(attachmentUrl)}\\)\\n?`, 'g'), '')
+            .replace(new RegExp(`\\[[^\\]]*\\]\\(${escapeRegExp(attachmentUrl)}\\)`, 'g'), '')
+            .trim();
+          state.updatedAt = new Date().toISOString();
+          syncEditorValue();
+          renderPreview();
+          renderAttachments();
+          persist(true);
+        } catch (error) {
+          if (statusLabel) {
+            statusLabel.textContent = error && error.message ? error.message : 'Failed to delete attachment.';
+          }
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+
+    if (countLabel) {
+      countLabel.textContent = String(state.attachments.length);
+    }
+  };
+
+  const renderPreview = () => {
+    if (preview) {
+      preview.innerHTML = renderNotePreview(state.text);
+    }
+  };
+
+  const setOpen = (open, focusEditor = false) => {
+    state.open = open;
+    if (noteBody) {
+      noteBody.hidden = !open;
+    }
+    toggleButtons.forEach((button) => {
+      button.textContent = open ? 'Hide note' : 'Open note';
+    });
+    if (open && focusEditor && textarea) {
+      textarea.focus();
+    }
+    persist(true);
+  };
+
+  const scheduleSave = () => {
+    state.updatedAt = new Date().toISOString();
+    persist(false);
+    renderPreview();
+    renderAttachments();
+  };
+
+  syncEditorValue();
+  renderPreview();
+  renderAttachments();
+  setOpen(state.open, false);
+
+  toggleButtons.forEach((button) => {
+    button.addEventListener('click', () => setOpen(!state.open, !state.open));
+  });
+
+  if (collapseButton) {
+    collapseButton.addEventListener('click', () => setOpen(false));
+  }
+
+  if (textarea) {
+    textarea.addEventListener('input', () => {
+      state.text = textarea.value;
+      scheduleSave();
+    });
+
+    textarea.addEventListener('paste', async (event) => {
+      const clipboardItems = Array.from((event.clipboardData && event.clipboardData.items) || []);
+      const imageFiles = clipboardItems
+        .map((item) => item.kind === 'file' ? item.getAsFile() : null)
+        .filter((file) => file && file.type && file.type.startsWith('image/'));
+
+      if (!imageFiles.length) {
+        return;
+      }
+
+      event.preventDefault();
+      const insertedSnippets = [];
+      try {
+        for (const file of imageFiles) {
+          const attachment = await uploadNoteAttachment(notebookSlug, cardId, file);
+          state.attachments.push(attachment);
+          insertedSnippets.push(`![${attachment.filename}](${attachment.url})`);
+        }
+        const snippet = `${insertedSnippets.join(String.fromCharCode(10))}${String.fromCharCode(10)}`;
+        insertTextAtCursor(textarea, snippet);
+        state.text = textarea.value;
+        scheduleSave();
+        renderAttachments();
+        setOpen(true, false);
+      } catch (error) {
+        if (statusLabel) {
+          statusLabel.textContent = error && error.message ? error.message : 'Failed to upload clipboard image.';
+        }
+      }
+    });
+  }
+
+  if (clearButton) {
+    clearButton.addEventListener('click', async () => {
+      if (!state.text && !state.attachments.length) {
+        return;
+      }
+
+      clearButton.disabled = true;
+      try {
+        for (const attachment of [...state.attachments]) {
+          await deleteNoteAttachment(notebookSlug, cardId, attachment.url);
+        }
+      } catch (error) {
+        if (statusLabel) {
+          statusLabel.textContent = error && error.message ? error.message : 'Failed to clear attachments.';
+        }
+      }
+      state.text = '';
+      state.attachments = [];
+      state.updatedAt = new Date().toISOString();
+      if (textarea) {
+        textarea.value = '';
+      }
+      renderPreview();
+      renderAttachments();
+      persist(true);
+      clearButton.disabled = false;
+    });
+  }
+
+  window.addEventListener('beforeunload', () => {
+    if (syncTimer) {
+      clearTimeout(syncTimer);
+      syncTimer = null;
+      syncPersistentState('note', { notebookSlug, cardId: String(cardId), noteState: state });
+    }
+  });
+}
+
 function bindHomePage() {
   const root = document.querySelector('[data-home-root]');
   if (!root) {
@@ -1553,10 +2335,22 @@ function bindHomePage() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  bindHomePage();
-  bindOverviewPage();
-  bindCardPage();
-  bindPlaygroundPanel();
+  const init = async () => {
+    hydratePersistentStateFromBoot();
+    try {
+      await refreshPersistentStateFromServer();
+    } catch (error) {
+      console.warn('Persistent state refresh failed:', error);
+    }
+
+    bindHomePage();
+    bindOverviewPage();
+    bindCardPage();
+    bindPlaygroundPanel();
+    bindNotePanel();
+  };
+
+  init();
 });
 """
 
@@ -1811,9 +2605,10 @@ def notebook_payload(notebook: Notebook) -> Dict[str, object]:
     }
 
 
-def boot_payload(notebooks: Sequence[Notebook]) -> Dict[str, object]:
+def boot_payload(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[str, object]] = None) -> Dict[str, object]:
     return {
         "notebooks": [notebook_payload(notebook) for notebook in notebooks],
+        "persistentState": persistent_state or {"saved_cards": [], "notebooks": {}, "notes": {}},
     }
 
 
@@ -1935,6 +2730,78 @@ def compile_cpp_submission(source: str, stdin_data: str = "", language: str = CP
         }
 
 
+def safe_slug_path_component(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._") or "item"
+
+
+def infer_attachment_extension(filename: str, mime_type: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}:
+        return suffix
+    guessed = mimetypes.guess_extension(mime_type or "")
+    if guessed:
+        return guessed
+    return ".bin"
+
+
+def decode_data_url(data_url: str) -> Tuple[bytes, str]:
+    if not data_url.startswith("data:"):
+        raise ValueError("Expected a data URL.")
+    header, _, payload = data_url.partition(",")
+    if ";base64" not in header:
+        raise ValueError("Only base64 data URLs are supported.")
+    mime_type = header[5:header.index(";base64")] or "application/octet-stream"
+    return base64.b64decode(payload), mime_type
+
+
+def note_attachment_dir(state_dir: Path, notebook_slug: str, card_id: str) -> Path:
+    return state_dir / "note-attachments" / safe_slug_path_component(notebook_slug) / safe_slug_path_component(str(card_id))
+
+
+def note_attachment_url(notebook_slug: str, card_id: str, filename: str) -> str:
+    return f"/_attachments/{safe_slug_path_component(notebook_slug)}/{safe_slug_path_component(str(card_id))}/{filename}"
+
+
+def save_note_attachment_file(state_dir: Path, notebook_slug: str, card_id: str, filename: str, data: bytes, mime_type: str) -> Dict[str, object]:
+    if len(data) > MAX_NOTE_ATTACHMENT_BYTES:
+        raise ValueError(f"Attachment too large; limit is {MAX_NOTE_ATTACHMENT_BYTES} bytes.")
+
+    attachment_dir = note_attachment_dir(state_dir, notebook_slug, card_id)
+    attachment_dir.mkdir(parents=True, exist_ok=True)
+    attachment_id = uuid.uuid4().hex
+    extension = infer_attachment_extension(filename, mime_type)
+    stored_name = f"{attachment_id}{extension}"
+    stored_path = attachment_dir / stored_name
+    stored_path.write_bytes(data)
+    return {
+        "id": attachment_id,
+        "filename": filename or stored_name,
+        "url": note_attachment_url(notebook_slug, card_id, stored_name),
+        "mimeType": mime_type or "application/octet-stream",
+        "createdAt": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "size": len(data),
+        "storedName": stored_name,
+    }
+
+
+def delete_note_attachment_file(state_dir: Path, notebook_slug: str, card_id: str, stored_name: str) -> None:
+    attachment_path = note_attachment_dir(state_dir, notebook_slug, card_id) / stored_name
+    try:
+        attachment_path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def attachment_url_to_stored_name(url: str) -> Optional[str]:
+    parsed = urlparse(url)
+    if not parsed.path.startswith("/_attachments/"):
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 4:
+        return None
+    return parts[-1]
+
+
 def notebook_by_slug(notebooks: Sequence[Notebook], slug: str) -> Notebook:
     for notebook in notebooks:
         if notebook.spec.slug == slug:
@@ -1979,7 +2846,7 @@ def render_page(title: str, body: str, extra_head: str = "", boot_data: Optional
 </html>"""
 
 
-def render_home(notebooks: Sequence[Notebook]) -> str:
+def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[str, object]] = None) -> str:
     tiles = []
     for notebook in notebooks:
         card_count = len(notebook.cards)
@@ -2000,6 +2867,60 @@ def render_home(notebooks: Sequence[Notebook]) -> str:
             </a>
             """
         )
+
+    note_entries = []
+    note_state_root = (persistent_state or {}).get("notes", {}) if persistent_state else {}
+    if isinstance(note_state_root, dict):
+        notebook_map = {notebook.spec.slug: notebook for notebook in notebooks}
+        for notebook_slug, cards in note_state_root.items():
+            notebook = notebook_map.get(notebook_slug)
+            if notebook is None or not isinstance(cards, dict):
+                continue
+            for card_id, note_state in cards.items():
+                if not isinstance(note_state, dict):
+                    continue
+                text = note_state.get("text", "")
+                attachments = note_state.get("attachments", [])
+                updated_at = note_state.get("updatedAt", "")
+                if not isinstance(text, str):
+                    text = ""
+                if not isinstance(attachments, list):
+                    attachments = []
+                if not text.strip() and not attachments:
+                    continue
+                try:
+                    card_number = int(card_id)
+                except (TypeError, ValueError):
+                    continue
+                card = notebook.by_number.get(card_number)
+                if card is None:
+                    continue
+                preview = first_paragraph(text) if text.strip() else f"{len(attachments)} attachment(s)"
+                note_entries.append(
+                    {
+                        "updatedAt": updated_at if isinstance(updated_at, str) else "",
+                        "html": f"""
+                          <article class="card-tile note-card">
+                            <div class="card-meta">
+                              <span class="card-number">{card.number:02d}</span>
+                              <span>{html.escape(notebook.spec.title)}</span>
+                            </div>
+                            <h3>{html.escape(card.title)}</h3>
+                            <p class="card-preview">{html.escape(preview)}</p>
+                            <div class="tag-row">
+                              <span class="tag">note</span>
+                              <span class="tag">{len(attachments)} attachments</span>
+                            </div>
+                            <div class="reveal-actions">
+                              <a class="button" href="{card_url(notebook, card)}">Open note</a>
+                            </div>
+                          </article>
+                        """,
+                    }
+                )
+
+    note_entries.sort(key=lambda entry: entry.get("updatedAt", ""), reverse=True)
+    note_tiles = [entry["html"] for entry in note_entries[:12]]
 
     body = f"""
     <div class="app-shell" data-home-root data-notebook-root data-total-cards="{sum(len(n.cards) for n in notebooks)}">
@@ -2026,16 +2947,24 @@ def render_home(notebooks: Sequence[Notebook]) -> str:
         <p class="saved-empty" data-saved-empty>你还没有保存任何题目。点开题目页里的 SAVE 就会出现在这里。</p>
         <div class="overview-grid saved-grid" data-saved-root></div>
       </section>
+      <section class="home-saved-shell">
+        <div class="card-meta">
+          <span class="muted">My Notes</span>
+          <span class="muted">{len(note_tiles)} recent</span>
+        </div>
+        <p class="saved-empty" {'hidden' if note_tiles else ''}>你的 note 还为空。打开题目页里的 note 区，输入文字或粘贴截图后会出现在这里。</p>
+        <div class="overview-grid saved-grid">{''.join(note_tiles)}</div>
+      </section>
       <section class="overview-grid">
         {''.join(tiles)}
       </section>
       <p class="page-footer">本地启动后可以直接把这套页面当作练习工具使用，不需要数据库或登录。</p>
     </div>
     """
-    return render_page("C++ 学习笔记卡片站", body, boot_data=boot_payload(notebooks))
+    return render_page("C++ 学习笔记卡片站", body, boot_data=boot_payload(notebooks, persistent_state))
 
 
-def render_overview(notebook: Notebook) -> str:
+def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, object]] = None) -> str:
     cards = []
     for card in notebook.cards:
         search_text = " ".join([card.title, card.preview, " ".join(card.labels)])
@@ -2118,10 +3047,10 @@ def render_overview(notebook: Notebook) -> str:
       <p class="page-footer">答案默认不在总览页展开，点进题目后再显示，减少“看答案”的摩擦。</p>
     </div>
     """
-    return render_page(notebook.spec.title, body, boot_data=boot_payload([notebook]))
+    return render_page(notebook.spec.title, body, boot_data=boot_payload([notebook], persistent_state))
 
 
-def render_card_page(notebook: Notebook, card: Card) -> str:
+def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[Dict[str, object]] = None) -> str:
     card_index = card.number - 1
     previous_card = notebook.cards[card_index - 1] if card_index > 0 else None
     next_card = notebook.cards[card_index + 1] if card_index + 1 < len(notebook.cards) else None
@@ -2174,6 +3103,7 @@ def render_card_page(notebook: Notebook, card: Card) -> str:
               <button class="button" type="button" data-reveal-button>显示答案</button>
               <button class="button-secondary" type="button" data-save-button>SAVE</button>
               <button class="button-secondary" type="button" data-playground-open>RUN C++</button>
+              <button class="button-secondary" type="button" data-note-toggle>My Note</button>
               <a class="button-secondary" href="{overview_url(notebook)}">返回总览</a>
               <a class="button-secondary" href="{random_url(notebook)}" data-random-button data-target="{random_url(notebook)}">随机题</a>
             </div>
@@ -2182,6 +3112,39 @@ def render_card_page(notebook: Notebook, card: Card) -> str:
           <div class="answer-wrap" data-answer-wrap hidden>
             {answer_sections}
           </div>
+
+          <section class="note-panel" data-note-root data-notebook-slug="{html.escape(notebook.spec.slug, quote=True)}" data-card-id="{card.number}">
+            <div class="note-panel-head">
+              <div>
+                <div class="note-title">My Note</div>
+                <div class="note-subtitle">Paste text, screenshots, or images. `Ctrl+V` works when the editor is focused.</div>
+              </div>
+              <div class="note-head-actions">
+                <span class="note-status" data-note-status>Draft</span>
+                <span class="note-count"><strong data-note-count>0</strong> attachments</span>
+                <button class="button-secondary" type="button" data-note-toggle>Open note</button>
+              </div>
+            </div>
+
+            <div class="note-body" data-note-body hidden>
+              <textarea class="note-editor" data-note-text spellcheck="false" placeholder="Write markdown notes here. Paste text or screenshots with Ctrl+V."></textarea>
+
+              <div class="reveal-actions note-actions">
+                <button class="button-secondary" type="button" data-note-clear>Clear note</button>
+                <button class="button-secondary" type="button" data-note-collapse>Collapse</button>
+              </div>
+
+              <section class="note-preview-shell">
+                <div class="note-section-head">Preview</div>
+                <div class="note-preview" data-note-preview></div>
+              </section>
+
+              <section class="note-attachments-shell">
+                <div class="note-section-head">Attachments</div>
+                <div class="note-attachments" data-note-attachments></div>
+              </section>
+            </div>
+          </section>
 
           <div class="reveal-actions">
             {'<a class="button-secondary" href="' + card_url(notebook, previous_card) + '">上一题</a>' if previous_card else '<span class="button-secondary" aria-disabled="true">上一题</span>'}
@@ -2239,11 +3202,12 @@ def render_card_page(notebook: Notebook, card: Card) -> str:
       </div>
     </div>
     """
-    return render_page(f"{notebook.spec.title} - {card.title}", body, boot_data=boot_payload([notebook]))
+    return render_page(f"{notebook.spec.title} - {card.title}", body, boot_data=boot_payload([notebook], persistent_state))
 
 
 class FlashcardServer(BaseHTTPRequestHandler):
     notebooks: Tuple[Notebook, ...] = ()
+    state_store: PersistentStateStore
 
     def log_message(self, format: str, *args) -> None:  # noqa: A003
         sys.stderr.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), format % args))
@@ -2262,7 +3226,11 @@ class FlashcardServer(BaseHTTPRequestHandler):
         route = parsed.path.rstrip("/") or "/"
 
         if route == "/":
-            self.send_html(render_home(self.notebooks), send_body=send_body)
+            self.send_html(render_home(self.notebooks, self.state_store.snapshot()), send_body=send_body)
+            return
+
+        if route == "/_api/state":
+            self.send_json(self.state_store.snapshot(), send_body=send_body)
             return
 
         if route in {"/_static/app.css", "/static/app.css"}:
@@ -2271,6 +3239,10 @@ class FlashcardServer(BaseHTTPRequestHandler):
 
         if route in {"/_static/app.js", "/static/app.js"}:
             self.send_text(APP_JS, "application/javascript; charset=utf-8", send_body=send_body)
+            return
+
+        if route.startswith("/_attachments/"):
+            self.handle_attachment_request(route, send_body=send_body)
             return
 
         parts = [part for part in route.split("/") if part]
@@ -2286,7 +3258,7 @@ class FlashcardServer(BaseHTTPRequestHandler):
             return
 
         if len(parts) == 1:
-            self.send_html(render_overview(notebook), send_body=send_body)
+            self.send_html(render_overview(notebook, self.state_store.snapshot()), send_body=send_body)
             return
 
         if len(parts) == 2 and parts[1] == "random":
@@ -2299,7 +3271,7 @@ class FlashcardServer(BaseHTTPRequestHandler):
             if card is None:
                 self.send_not_found(send_body=send_body)
                 return
-            self.send_html(render_card_page(notebook, card), send_body=send_body)
+            self.send_html(render_card_page(notebook, card, self.state_store.snapshot()), send_body=send_body)
             return
 
         self.send_not_found(send_body=send_body)
@@ -2312,7 +3284,150 @@ class FlashcardServer(BaseHTTPRequestHandler):
             self.handle_compile(send_body=send_body)
             return
 
+        if route == "/_api/state":
+            self.handle_state_update(send_body=send_body)
+            return
+
+        if route == "/_api/note-attachment":
+            self.handle_note_attachment_upload(send_body=send_body)
+            return
+
+        if route == "/_api/note-attachment-delete":
+            self.handle_note_attachment_delete(send_body=send_body)
+            return
+
         self.send_not_found(send_body=send_body)
+
+    def handle_attachment_request(self, route: str, send_body: bool) -> None:
+        parts = [part for part in route.split("/") if part]
+        if len(parts) != 4:
+            self.send_not_found(send_body=send_body)
+            return
+
+        notebook_slug = parts[1]
+        card_id = parts[2]
+        filename = parts[3]
+        attachment_path = note_attachment_dir(self.state_store.state_dir, notebook_slug, card_id) / filename
+        if not attachment_path.exists():
+            self.send_not_found(send_body=send_body)
+            return
+
+        mime_type = mimetypes.guess_type(attachment_path.name)[0] or "application/octet-stream"
+        self.send_file(attachment_path, mime_type, send_body=send_body)
+
+    def handle_state_update(self, send_body: bool) -> None:
+        content_length = int(self.headers.get("Content-Length", "0") or "0")
+        raw_body = self.rfile.read(content_length) if content_length > 0 else b""
+        try:
+            payload = json.loads(raw_body.decode("utf-8"))
+        except json.JSONDecodeError:
+            self.send_json({"ok": False, "error": "Invalid JSON payload."}, status=400, send_body=send_body)
+            return
+
+        kind = payload.get("kind")
+        if kind == "saved_cards":
+            saved_cards = payload.get("savedCards", [])
+            if not isinstance(saved_cards, list):
+                self.send_json({"ok": False, "error": "savedCards must be a list."}, status=400, send_body=send_body)
+                return
+            saved_cards = [str(entry) for entry in saved_cards]
+            self.state_store.save_saved_cards(saved_cards)
+            self.send_json({"ok": True, "savedCards": saved_cards}, send_body=send_body)
+            return
+
+        if kind == "notebook":
+            notebook_slug = payload.get("notebookSlug", "")
+            state = payload.get("state", {})
+            if not isinstance(notebook_slug, str) or not notebook_slug:
+                self.send_json({"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
+                return
+            if not isinstance(state, dict):
+                self.send_json({"ok": False, "error": "state must be an object."}, status=400, send_body=send_body)
+                return
+            self.state_store.save_notebook_state(notebook_slug, state)
+            self.send_json({"ok": True, "notebookSlug": notebook_slug}, send_body=send_body)
+            return
+
+        if kind == "note":
+            notebook_slug = payload.get("notebookSlug", "")
+            card_id = payload.get("cardId", "")
+            note_state = payload.get("noteState", {})
+            if not isinstance(notebook_slug, str) or not notebook_slug:
+                self.send_json({"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
+                return
+            if not isinstance(card_id, str) or not card_id:
+                self.send_json({"ok": False, "error": "cardId must be a string."}, status=400, send_body=send_body)
+                return
+            if not isinstance(note_state, dict):
+                self.send_json({"ok": False, "error": "noteState must be an object."}, status=400, send_body=send_body)
+                return
+            self.state_store.save_note_state(notebook_slug, card_id, note_state)
+            self.send_json({"ok": True, "notebookSlug": notebook_slug, "cardId": card_id}, send_body=send_body)
+            return
+
+        self.send_json({"ok": False, "error": "Unsupported state update kind."}, status=400, send_body=send_body)
+
+    def handle_note_attachment_upload(self, send_body: bool) -> None:
+        content_length = int(self.headers.get("Content-Length", "0") or "0")
+        raw_body = self.rfile.read(content_length) if content_length > 0 else b""
+        try:
+            payload = json.loads(raw_body.decode("utf-8"))
+        except json.JSONDecodeError:
+            self.send_json({"ok": False, "error": "Invalid JSON payload."}, status=400, send_body=send_body)
+            return
+
+        notebook_slug = payload.get("notebookSlug", "")
+        card_id = payload.get("cardId", "")
+        filename = payload.get("filename", "")
+        data_url = payload.get("dataUrl", "")
+        if not isinstance(notebook_slug, str) or not notebook_slug:
+            self.send_json({"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
+            return
+        if not isinstance(card_id, str) or not card_id:
+            self.send_json({"ok": False, "error": "cardId must be a string."}, status=400, send_body=send_body)
+            return
+        if not isinstance(filename, str) or not isinstance(data_url, str):
+            self.send_json({"ok": False, "error": "filename and dataUrl must be strings."}, status=400, send_body=send_body)
+            return
+
+        try:
+            data, mime_type = decode_data_url(data_url)
+            attachment = save_note_attachment_file(self.state_store.state_dir, notebook_slug, card_id, filename, data, mime_type)
+        except (ValueError, OSError) as exc:
+            self.send_json({"ok": False, "error": str(exc)}, status=400, send_body=send_body)
+            return
+
+        self.send_json({"ok": True, "attachment": attachment}, send_body=send_body)
+
+    def handle_note_attachment_delete(self, send_body: bool) -> None:
+        content_length = int(self.headers.get("Content-Length", "0") or "0")
+        raw_body = self.rfile.read(content_length) if content_length > 0 else b""
+        try:
+            payload = json.loads(raw_body.decode("utf-8"))
+        except json.JSONDecodeError:
+            self.send_json({"ok": False, "error": "Invalid JSON payload."}, status=400, send_body=send_body)
+            return
+
+        notebook_slug = payload.get("notebookSlug", "")
+        card_id = payload.get("cardId", "")
+        attachment_url = payload.get("attachmentUrl", "")
+        if not isinstance(notebook_slug, str) or not notebook_slug:
+            self.send_json({"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
+            return
+        if not isinstance(card_id, str) or not card_id:
+            self.send_json({"ok": False, "error": "cardId must be a string."}, status=400, send_body=send_body)
+            return
+        if not isinstance(attachment_url, str) or not attachment_url:
+            self.send_json({"ok": False, "error": "attachmentUrl must be a string."}, status=400, send_body=send_body)
+            return
+
+        stored_name = attachment_url_to_stored_name(attachment_url)
+        if not stored_name:
+            self.send_json({"ok": False, "error": "Invalid attachment URL."}, status=400, send_body=send_body)
+            return
+
+        delete_note_attachment_file(self.state_store.state_dir, notebook_slug, card_id, stored_name)
+        self.send_json({"ok": True}, send_body=send_body)
 
     def handle_compile(self, send_body: bool) -> None:
         content_length = int(self.headers.get("Content-Length", "0") or "0")
@@ -2366,6 +3481,15 @@ class FlashcardServer(BaseHTTPRequestHandler):
         if send_body:
             self.wfile.write(payload)
 
+    def send_file(self, path: Path, content_type: str, status: int = 200, send_body: bool = True) -> None:
+        payload = path.read_bytes()
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        if send_body:
+            self.wfile.write(payload)
+
     def send_redirect(self, location: str, status: int = 302) -> None:
         self.send_response(status)
         self.send_header("Location", location)
@@ -2412,6 +3536,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     FlashcardServer.notebooks = notebooks
+    FlashcardServer.state_store = PersistentStateStore(DEFAULT_STATE_DIR)
     server = ThreadingHTTPServer((args.host, args.port), FlashcardServer)
     url = f"http://{args.host}:{args.port}/"
     print(f"Serving flash cards at {url}")

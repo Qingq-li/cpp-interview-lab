@@ -3823,3 +3823,308 @@ int main() {
 - 先把每题的“核心答案”讲顺
 - 再练“错误回答示例”，避免面试时踩坑
 - 最后把“项目里怎么说”替换成你自己真实项目里的表述
+
+---
+
+## 58. `explicit` 关键字有什么作用？
+
+### 核心答案
+
+- `explicit` 用来禁止编译器进行隐式类型转换
+- 它最常见的用途是修饰“单参数构造函数”和“类型转换运算符”
+- 加上 `explicit` 后，编译器不会因为“能转换”就自动帮你转换，代码意图更清晰
+
+### English explanation
+
+In an English interview, I would say:
+
+- `explicit` prevents unintended implicit conversions
+- It is commonly used on single-argument constructors and conversion operators
+- With `explicit`, the compiler will not silently convert types for you, so the code is safer and easier to read
+
+### 错误回答示例
+
+- “`explicit` 只是一个可有可无的风格关键字”
+- “加不加 `explicit` 没什么区别”
+- “`explicit` 是为了让构造函数更快”
+
+### 面试官想听什么
+
+- 你是否理解隐式转换为什么会带来歧义和 bug
+- 你是否知道哪些场景下应该优先加 `explicit`
+- 你是否能说出 `explicit` 和构造函数、转换运算符的关系
+
+### 项目里怎么说
+
+我会在容易发生误用的类型转换入口上加 `explicit`，避免调用方因为隐式转换而写出看起来“能编译、但不够明确”的代码。这样接口更清晰，也更容易维护。
+
+### 深入解释
+
+- 对于单参数构造函数，如果不加 `explicit`，编译器可能把一个普通值自动转成对象
+- 这在函数重载、临时对象构造、条件判断中都可能带来意外行为
+- `explicit` 不是为了“限制功能”，而是为了让转换必须是显式的、可读的
+- 在现代 C++ 中，很多设计都倾向于“减少隐式行为”，`explicit` 就是这类原则的典型体现
+
+### 示例
+
+```cpp
+#include <iostream>
+
+class UserId {
+public:
+    explicit UserId(int value) : value_(value) {}
+
+    int value() const { return value_; }
+
+private:
+    int value_;
+};
+
+void printUser(UserId id) {
+    std::cout << id.value() << '\n';
+}
+
+int main() {
+    UserId id1(42);
+    printUser(id1);
+
+    // printUser(42); // 编译失败：不能发生隐式转换
+}
+```
+
+### 代码讲解
+
+- `explicit UserId(int value)` 禁止了 `int -> UserId` 的隐式转换
+- `printUser(id1)` 是显式传入对象，语义清楚
+- `printUser(42)` 会失败，避免调用方误以为整数可以自动当成 `UserId`
+- 这类写法在封装 ID、标签、配置项、强类型包装器时很常见
+
+---
+
+## 59. `std::atomic` 和 `volatile` 有什么区别？
+
+### 核心答案
+
+- `std::atomic` 用于多线程场景，提供原子性和更明确的同步语义
+- `volatile` 不是线程同步工具，它主要表示“这个值可能被外部因素改变”，例如硬件寄存器或信号处理
+- 在现代 C++ 里，跨线程共享数据通常应该用 `std::atomic`、`mutex`、条件变量等，而不是 `volatile`
+
+### English explanation
+
+In an English interview, I would say:
+
+- `std::atomic` is designed for concurrent programming and provides atomic operations
+- `volatile` does not make code thread-safe; it only tells the compiler that the value may change unexpectedly
+- For shared data between threads, I would use `std::atomic` or proper synchronization primitives instead of `volatile`
+
+### 错误回答示例
+
+- “`volatile` 可以保证多线程安全”
+- “`std::atomic` 只是 `volatile` 的升级版”
+- “两者本质上都只是防止编译器优化”
+
+### 面试官想听什么
+
+- 你是否知道 `volatile` 不能替代锁或原子变量
+- 你是否理解原子性、可见性、顺序性这几个概念不是一回事
+- 你是否知道 `std::atomic` 适合什么场景，`volatile` 又适合什么场景
+
+### 项目里怎么说
+
+我会把 `volatile` 留给确实需要和外部设备、特殊信号交互的场景；如果是多线程共享状态，我会优先使用 `std::atomic` 或锁来表达同步意图，避免把“编译器别优化”误当成“线程安全”。
+
+### 深入解释
+
+- `volatile` 的主要作用是阻止编译器对该变量做某些假设，比如缓存到寄存器中不重新读取
+- 但它不保证读写是原子的，也不保证线程之间的顺序关系
+- 两个线程同时读写一个 `volatile int`，仍然可能产生数据竞争
+- `std::atomic` 则是为并发设计的，至少在语言层面提供了原子读写和内存序控制
+- 如果你需要的是线程同步，不要先想到 `volatile`，而是先问自己：要的是原子性、互斥、还是通知机制
+
+### 示例
+
+```cpp
+#include <atomic>
+#include <iostream>
+
+std::atomic<int> counter{0};
+volatile int hw_flag = 0;
+
+int main() {
+    counter.fetch_add(1, std::memory_order_relaxed);
+    std::cout << counter.load() << '\n';
+
+    // hw_flag 适合描述“可能被硬件或信号改变的值”
+    std::cout << hw_flag << '\n';
+}
+```
+
+### 代码讲解
+
+- `std::atomic<int>` 适合在多线程里做计数、状态标记、一次性发布等工作
+- `fetch_add` 和 `load` 都是原子操作，能避免并发读写造成的数据竞争
+- `volatile int hw_flag` 只表达“这个值可能随时变化”，不表示线程安全
+- 如果两个线程同时修改 `hw_flag`，问题依然存在
+
+---
+
+## 60. 为什么要用基类指针或引用指向子类对象？
+
+### 核心答案
+
+- 这样可以用统一的接口操作不同子类对象，这就是多态的意义
+- 调用时会根据对象的真实类型执行对应的子类实现
+- 它的价值在于面向接口编程、降低耦合、提升扩展性
+
+### English explanation
+
+In an English interview, I would say:
+
+- Using a base class pointer or reference to refer to derived objects gives us a unified interface
+- It enables runtime polymorphism, where the actual overridden function is chosen based on the real object type
+- This approach improves extensibility and keeps the code loosely coupled
+
+### 错误回答示例
+
+- “只是为了节省一点内存”
+- “因为子类对象不能直接传给函数”
+- “基类指针只是语法上的写法，没有实际作用”
+
+### 面试官想听什么
+
+- 你是否理解多态解决的不是“能不能调用”，而是“如何统一处理不同对象”
+- 你是否知道动态绑定发生在运行时
+- 你是否能说清楚“面向接口，而不是面向实现”
+
+### 项目里怎么说
+
+在项目里，我会把共同行为抽到基类接口里，比如 `Animal::speak()`，然后在业务层只依赖基类指针或引用。这样新增 `Dog`、`Cat` 或其他类型时，不需要改调用方代码，只需要补一个新的派生类实现。
+
+### 深入解释
+
+- 基类指针或引用让调用方不关心具体子类类型
+- 子类通过 `virtual` 函数重写基类接口，运行时会触发动态绑定
+- 这比直接写 `if (type == ...)` 更符合开闭原则
+- 代价是：你需要正确设计基类接口，并注意析构函数通常应当是 `virtual`
+
+### 示例
+
+```cpp
+#include <iostream>
+
+class Animal {
+public:
+    virtual ~Animal() = default;
+
+    virtual void speak() const {
+        std::cout << "animal\n";
+    }
+};
+
+class Dog : public Animal {
+public:
+    void speak() const override {
+        std::cout << "dog\n";
+    }
+};
+
+class Cat : public Animal {
+public:
+    void speak() const override {
+        std::cout << "cat\n";
+    }
+};
+
+void makeSound(const Animal& animal) {
+    animal.speak();
+}
+
+int main() {
+    Dog dog;
+    Cat cat;
+
+    makeSound(dog);
+    makeSound(cat);
+}
+```
+
+### 代码讲解
+
+- `Animal` 是统一接口，调用方只依赖它
+- `Dog` 和 `Cat` 分别重写 `speak()`，表达各自行为
+- `makeSound(const Animal&)` 只关心“这是一个动物”，不关心具体是哪一种
+- `virtual` 让 `speak()` 在运行时按照真实对象类型分派
+- 这就是多态：同一个接口，不同对象表现出不同实现
+
+---
+
+## 61. `std::atomic` 常用接口有哪些？
+
+### 核心答案
+
+- `load()`：读取当前值
+- `store(v)`：写入新值
+- `exchange(v)`：写入新值，并返回旧值
+- `fetch_add(n)` / `fetch_sub(n)`：原子地加减
+- `fetch_and(n)` / `fetch_or(n)` / `fetch_xor(n)`：原子地做位运算
+- `compare_exchange_weak()` / `compare_exchange_strong()`：CAS，比较并交换
+
+### English explanation
+
+In an English interview, I would say:
+
+- `std::atomic` provides atomic load/store and read-modify-write operations
+- Common member functions include `load`, `store`, `exchange`, `fetch_add`, and CAS operations
+- These interfaces are useful when multiple threads need to safely update shared state
+
+### 错误回答示例
+
+- “`atomic` 只有 `load` 和 `store`”
+- “`compare_exchange_weak` 和 `strong` 没区别”
+- “`fetch_add` 只是普通加法，只是名字不一样”
+
+### 面试官想听什么
+
+- 你是否知道 `atomic` 不只是“一个线程安全变量”，而是一组原子操作接口
+- 你是否理解 RMW 操作的意义
+- 你是否知道 CAS 的工作方式，以及 `weak` 和 `strong` 的区别大意
+
+### 项目里怎么说
+
+如果我需要做计数器、状态标记、一次性初始化结果发布，我会优先考虑 `std::atomic` 的 `load`、`store`、`fetch_add` 和 CAS 这类接口，因为它们比手写锁更轻量，也更能准确表达意图。
+
+### 深入解释
+
+- `load()` 和 `store()` 是最基础的读写接口
+- `exchange()` 适合“拿走旧值、设置新值”的场景
+- `fetch_add()` 这类接口是典型的读-改-写原子操作，适合计数器
+- `compare_exchange_*()` 是无锁算法里最常见的原语之一
+- `compare_exchange_weak()` 可能发生伪失败，所以通常会放进循环里
+
+### 示例
+
+```cpp
+#include <atomic>
+#include <iostream>
+
+int main() {
+    std::atomic<int> counter{0};
+
+    std::cout << counter.load() << '\n';      // 0
+    std::cout << counter.exchange(10) << '\n'; // 0
+    std::cout << counter.fetch_add(5) << '\n'; // 10
+    std::cout << counter.load() << '\n';      // 15
+
+    int expected = 15;
+    bool ok = counter.compare_exchange_strong(expected, 20);
+    std::cout << ok << ' ' << expected << ' ' << counter.load() << '\n';
+}
+```
+
+### 代码讲解
+
+- `load()` 读出当前值
+- `exchange(10)` 把值改成 `10`，并返回旧值
+- `fetch_add(5)` 原子地加 `5`，返回加之前的值
+- `compare_exchange_strong(expected, 20)` 只有在当前值等于 `expected` 时才替换
+- 如果比较失败，`expected` 会被写回当前值，方便下一次重试

@@ -1,8 +1,13 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from tools.flashcards_app import (
     build_notebooks,
     compile_cpp_submission,
+    boot_payload,
+    PersistentStateStore,
+    save_note_attachment_file,
     render_card_page,
     render_markdown,
     render_overview,
@@ -18,12 +23,12 @@ class FlashcardAppTests(unittest.TestCase):
     def test_beginner_notebook_card_count(self):
         self.assertEqual(8, len(self.notebooks))
         self.assertEqual("beginner", self.beginner.spec.slug)
-        self.assertEqual(57, len(self.beginner.cards))
+        self.assertEqual(61, len(self.beginner.cards))
 
     def test_first_and_last_cards(self):
         self.assertEqual(1, self.beginner.cards[0].number)
         self.assertEqual("指针和引用有什么区别？", self.beginner.cards[0].title)
-        self.assertEqual(57, self.beginner.cards[-1].number)
+        self.assertEqual(61, self.beginner.cards[-1].number)
 
     def test_sections_are_parsed(self):
         card = self.beginner.cards[6]
@@ -58,6 +63,55 @@ int main() {}
         self.assertIn("上一题", html)
         self.assertIn("下一题", html)
         self.assertIn("data-answer-wrap", html)
+        self.assertIn("data-note-root", html)
+        self.assertIn("My Note", html)
+
+    def test_boot_payload_contains_persistent_state(self):
+        payload = boot_payload([self.beginner])
+        self.assertIn("persistentState", payload)
+        self.assertIn("saved_cards", payload["persistentState"])
+        self.assertIn("notebooks", payload["persistentState"])
+        self.assertIn("notes", payload["persistentState"])
+
+    def test_note_state_roundtrip(self):
+        with TemporaryDirectory() as tmpdir:
+            store = PersistentStateStore(Path(tmpdir))
+            store.save_note_state(
+                "beginner",
+                "1",
+                {
+                    "text": "hello note",
+                    "attachments": [
+                        {
+                            "id": "abc",
+                            "filename": "shot.png",
+                            "url": "/_attachments/beginner/1/abc.png",
+                            "mimeType": "image/png",
+                            "createdAt": "2026-04-24T00:00:00Z",
+                            "size": 3,
+                        }
+                    ],
+                    "updatedAt": "2026-04-24T00:00:00Z",
+                },
+            )
+            reloaded = PersistentStateStore(Path(tmpdir))
+            snapshot = reloaded.snapshot()
+            self.assertEqual("hello note", snapshot["notes"]["beginner"]["1"]["text"])
+            self.assertEqual(1, len(snapshot["notes"]["beginner"]["1"]["attachments"]))
+
+    def test_note_attachment_file_saved(self):
+        with TemporaryDirectory() as tmpdir:
+            attachment = save_note_attachment_file(
+                Path(tmpdir),
+                "beginner",
+                "1",
+                "screen.png",
+                b"png",
+                "image/png",
+            )
+            self.assertTrue(attachment["url"].startswith("/_attachments/beginner/1/"))
+            stored = Path(tmpdir) / "note-attachments" / "beginner" / "1" / attachment["storedName"]
+            self.assertTrue(stored.exists())
 
     def test_cpp_compile_success(self):
         result = compile_cpp_submission(

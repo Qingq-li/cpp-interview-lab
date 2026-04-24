@@ -47,3 +47,52 @@ python3 tools/flashcards_app.py
 
 这个页面会把每一道题拆成独立页面，默认先显示问题，点击按钮后再展开答案。
 每个 notebook 还有题号网格快速跳转、今日访问高亮、以及 `SAVE` 收藏区。
+题目页里还可以直接写 `My Note`，支持文字和粘贴截图/图片，内容会持久化到 `./data/`。
+
+## Docker 部署
+
+仓库里已经补了可同时支持 `x86_64/amd64` 和 `arm64` 的容器配置。
+容器会把浏览记录和收藏状态写到 `./data/flashcards-state.json`，通过 bind mount 保存在容器外。
+
+### 本地构建
+
+```bash
+docker build -t cpp-interview-lab:latest .
+```
+
+### x86 电脑
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.x86.yml up --build
+```
+
+### Raspberry Pi 5
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.arm.yml up --build
+```
+
+然后打开 `http://127.0.0.1:8000/`。
+
+如果你要推送多架构镜像，可以用 `buildx`：
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 -t your-name/cpp-interview-lab:latest --push .
+```
+
+如果你想在容器里直接读本地改动，可以额外加一个 bind mount：
+
+```bash
+docker run --rm -p 8000:8000 -u "$(id -u):$(id -g)" -v "$PWD":/app -v "$PWD/data":/data cpp-interview-lab:latest
+```
+
+### 快速启动
+
+```bash
+make server
+make docker-up-lan
+make docker-up-x86
+make docker-up-arm
+```
+
+`make docker-up-lan` 会根据机器架构自动选择 `amd64` 或 `arm64` 配置，并通过 `0.0.0.0:8000` 对局域网开放访问。
