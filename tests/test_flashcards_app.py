@@ -12,6 +12,7 @@ from tools.flashcards_app import (
     PWA_MANIFEST,
     save_note_attachment_file,
     render_card_page,
+    render_home,
     render_markdown,
     render_page,
     render_overview,
@@ -25,14 +26,20 @@ class FlashcardAppTests(unittest.TestCase):
         cls.beginner = next(notebook for notebook in cls.notebooks if notebook.spec.slug == "beginner")
 
     def test_beginner_notebook_card_count(self):
-        self.assertEqual(8, len(self.notebooks))
+        self.assertEqual(9, len(self.notebooks))
         self.assertEqual("beginner", self.beginner.spec.slug)
-        self.assertEqual(61, len(self.beginner.cards))
+        self.assertEqual(75, len(self.beginner.cards))
+        intermediate = next(notebook for notebook in self.notebooks if notebook.spec.slug == "intermediate")
+        advanced = next(notebook for notebook in self.notebooks if notebook.spec.slug == "advanced")
+        code_examples = next(notebook for notebook in self.notebooks if notebook.spec.slug == "code-examples")
+        self.assertEqual(45, len(intermediate.cards))
+        self.assertEqual(40, len(advanced.cards))
+        self.assertEqual(50, len(code_examples.cards))
 
     def test_first_and_last_cards(self):
         self.assertEqual(1, self.beginner.cards[0].number)
         self.assertEqual("指针和引用有什么区别？", self.beginner.cards[0].title)
-        self.assertEqual(61, self.beginner.cards[-1].number)
+        self.assertEqual(75, self.beginner.cards[-1].number)
 
     def test_sections_are_parsed(self):
         card = self.beginner.cards[6]
@@ -60,6 +67,27 @@ int main() {}
         self.assertIn("搜索题目", html)
         self.assertIn("/beginner/random", html)
         self.assertIn("cards visited", html)
+
+    def test_home_page_uses_production_copy(self):
+        html = render_home(self.notebooks)
+        self.assertNotIn("把原始 Markdown 按题拆开", html)
+        self.assertNotIn("Markdown 是唯一内容源", html)
+        self.assertNotIn("本地启动后可以直接", html)
+        self.assertNotIn("进入 beginner 卡片站", html)
+        self.assertIn("C++ interview practice", html)
+
+    def test_home_saved_cards_render_matching_entries(self):
+        html = render_home(
+            self.notebooks,
+            {
+                "saved_cards": ["beginner:1", "missing:999"],
+                "notebooks": {},
+                "notes": {},
+            },
+        )
+        self.assertIn("指针和引用有什么区别？", html)
+        self.assertIn("<strong data-saved-count>1</strong> saved", html)
+        self.assertNotIn("missing:999", html)
 
     def test_card_page_contains_answer_toggle(self):
         html = render_card_page(self.beginner, self.beginner.cards[0])

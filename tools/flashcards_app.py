@@ -82,25 +82,31 @@ NOTEBOOKS: Tuple[NotebookSpec, ...] = (
         slug="beginner",
         title="C++ 面试笔记：初级篇",
         source_path=ROOT / "docs" / "zh" / "beginner.md",
-        description="把 beginner.md 拆成逐题 flash card，默认先看问题，再点按钮展开答案。",
+        description="覆盖语法基础、面向对象、STL、智能指针和并发入门题。",
     ),
     NotebookSpec(
         slug="intermediate",
         title="C++ 面试笔记：中级篇",
         source_path=ROOT / "docs" / "zh" / "intermediate.md",
-        description="覆盖拷贝控制、移动语义、模板、智能指针、并发基础等中级题目。",
+        description="聚焦资源管理、移动语义、模板、异常安全和常见工程取舍。",
     ),
     NotebookSpec(
         slug="advanced",
         title="C++ 面试笔记：高级篇",
         source_path=ROOT / "docs" / "zh" / "advanced.md",
-        description="整理完美转发、内存模型、SFINAE、对象切片和现代 C++ 设计。",
+        description="深入完美转发、内存模型、SFINAE、对象模型和现代 C++ 设计。",
     ),
     NotebookSpec(
         slug="coding-round",
         title="手写代码题",
         source_path=ROOT / "docs" / "zh" / "coding-round.md",
-        description="把常见手写题拆成可快速复习的独立卡片。",
+        description="训练常见手写实现、边界条件分析和代码表达能力。",
+    ),
+    NotebookSpec(
+        slug="code-examples",
+        title="C++ Code Examples：知识点代码库",
+        source_path=ROOT / "docs" / "zh" / "code-examples.md",
+        description="用可运行代码复习 C++ 高频知识点、常见坑和工程写法。",
     ),
     NotebookSpec(
         slug="modern-cpp",
@@ -1235,7 +1241,7 @@ a:hover {
 .note-panel {
   margin-top: 18px;
   border: 1px solid rgba(15, 118, 110, 0.16);
-  border-radius: 20px;
+  border-radius: 8px;
   background: rgba(255, 250, 243, 0.9);
   box-shadow: 0 12px 28px rgba(73, 51, 30, 0.08);
   overflow: hidden;
@@ -1263,6 +1269,20 @@ a:hover {
   font-size: 13px;
 }
 
+.note-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.note-summary strong {
+  color: var(--ink);
+}
+
 .note-head-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1288,9 +1308,9 @@ a:hover {
 
 .note-editor {
   width: 100%;
-  min-height: 180px;
+  min-height: 150px;
   border: 1px solid rgba(81, 67, 57, 0.16);
-  border-radius: 16px;
+  border-radius: 8px;
   padding: 14px;
   resize: vertical;
   background: #fffdf8;
@@ -1307,7 +1327,7 @@ a:hover {
 .note-preview-shell,
 .note-attachments-shell {
   border: 1px solid rgba(81, 67, 57, 0.12);
-  border-radius: 16px;
+  border-radius: 8px;
   overflow: hidden;
   background: rgba(255, 250, 243, 0.88);
 }
@@ -2327,10 +2347,11 @@ function bindNotePanel() {
   const preview = root.querySelector('[data-note-preview]');
   const attachmentList = root.querySelector('[data-note-attachments]');
   const countLabel = root.querySelector('[data-note-count]');
+  const summaryLabel = root.querySelector('[data-note-summary]');
   const statusLabel = root.querySelector('[data-note-status]');
 
   let syncTimer = null;
-  state.open = Boolean(state.open || state.text.trim() || state.attachments.length);
+  state.open = false;
 
   const persist = (immediate = false) => {
     localStorage.setItem(storageKey, JSON.stringify(state));
@@ -2445,6 +2466,19 @@ function bindNotePanel() {
     if (preview) {
       preview.innerHTML = renderNotePreview(state.text);
     }
+    if (summaryLabel) {
+      const hasText = Boolean(state.text.trim());
+      const parts = [];
+      if (hasText) {
+        parts.push('<strong>Text note saved</strong>');
+      }
+      if (state.attachments.length) {
+        parts.push(`${state.attachments.length} attachment${state.attachments.length === 1 ? '' : 's'}`);
+      }
+      summaryLabel.innerHTML = parts.length
+        ? parts.join('<span aria-hidden="true">/</span>')
+        : 'No note yet';
+    }
   };
 
   const setOpen = (open, focusEditor = false) => {
@@ -2453,7 +2487,7 @@ function bindNotePanel() {
       noteBody.hidden = !open;
     }
     toggleButtons.forEach((button) => {
-      button.textContent = open ? 'Hide note' : 'Open note';
+      button.textContent = open ? 'Done' : 'Edit note';
     });
     if (open && focusEditor && textarea) {
       textarea.focus();
@@ -2620,20 +2654,19 @@ function bindHomePage() {
     }
 
     const entries = getSavedCards();
-    if (savedCount) {
-      savedCount.textContent = String(entries.length);
+    const validEntries = entries
+      .map((key) => ({ key, pair: cardMap.get(key) }))
+      .filter((entry) => entry.pair);
+
+    if (validEntries.length !== entries.length) {
+      saveSavedCards(validEntries.map((entry) => entry.key));
     }
 
-    if (!entries.length) {
-      if (savedRoot.querySelector('[data-saved-card]')) {
-        if (savedEmpty) {
-          savedEmpty.hidden = true;
-        }
-        if (savedCount) {
-          savedCount.textContent = String(savedRoot.querySelectorAll('[data-saved-card]').length);
-        }
-        return;
-      }
+    if (savedCount) {
+      savedCount.textContent = String(validEntries.length);
+    }
+
+    if (!validEntries.length) {
       savedRoot.innerHTML = '';
       if (savedEmpty) {
         savedEmpty.hidden = false;
@@ -2645,17 +2678,12 @@ function bindHomePage() {
       savedEmpty.hidden = true;
     }
 
-    savedRoot.innerHTML = entries
-      .map((key) => {
-        const pair = cardMap.get(key);
-        if (!pair) {
-          return '';
-        }
-
-        const notebook = pair.notebook;
-        const card = pair.card;
+    savedRoot.innerHTML = validEntries
+      .map((entry) => {
+        const notebook = entry.pair.notebook;
+        const card = entry.pair.card;
         return `
-          <article class="card-tile saved-card" data-saved-card data-key="${escapeHtml(key)}">
+          <article class="card-tile saved-card" data-saved-card data-key="${escapeHtml(entry.key)}">
             <div class="card-meta">
               <span class="card-number">${String(card.number).padStart(2, '0')}</span>
               <span>${escapeHtml(notebook.title)}</span>
@@ -2671,7 +2699,7 @@ function bindHomePage() {
                 class="button-secondary"
                 type="button"
                 data-unsave-button
-                data-key="${escapeHtml(key)}"
+                data-key="${escapeHtml(entry.key)}"
               >
                 Remove
               </button>
@@ -3273,7 +3301,6 @@ def render_page(title: str, body: str, extra_head: str = "", boot_data: Optional
 
 def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[str, object]] = None) -> str:
     tiles = []
-    quick_tiles = []
     card_lookup = {}
     for notebook in notebooks:
         card_count = len(notebook.cards)
@@ -3284,51 +3311,17 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
             f"""
             <a class="card-tile" href="{overview_url(notebook)}">
               <div class="card-meta">
-                <span class="card-number">01</span>
+                <span class="card-number">{card_count}</span>
                 <span>{card_count} cards</span>
               </div>
               <h3>{html.escape(notebook.spec.title)}</h3>
               <p class="card-preview">{html.escape(notebook.spec.description)}</p>
-              <div class="tag-row">
-                <span class="tag">local notebook</span>
-                <span class="tag">question first</span>
-                <span class="tag">answer reveal</span>
-              </div>
-            </a>
-            """
-        )
-
-    quick_hints = {
-        "beginner": "入门起点",
-        "intermediate": "中级进阶",
-        "advanced": "高级追问",
-        "coding-round": "手写强化",
-        "modern-cpp": "现代特性",
-        "stl-container-cheatsheet": "容器速查",
-        "concurrency-deep-dive": "并发专题",
-        "project-answer-templates": "项目表达",
-    }
-    quick_notebooks = notebooks
-    for notebook in quick_notebooks:
-        quick_hint = quick_hints.get(notebook.spec.slug, "快捷入口")
-        quick_tiles.append(
-            f"""
-            <a class="card-tile quick-card" href="{overview_url(notebook)}">
-              <div class="card-meta">
-                <span class="card-number">01</span>
-                <span>{len(notebook.cards)} cards</span>
-              </div>
-              <h3>{html.escape(notebook.spec.title)}</h3>
-              <p class="card-preview">{html.escape(notebook.spec.description)}</p>
-              <div class="tag-row">
-                <span class="tag">quick entry</span>
-                <span class="tag">{html.escape(quick_hint)}</span>
-              </div>
             </a>
             """
         )
 
     saved_entries = []
+    valid_saved_keys = []
     saved_state_root = (persistent_state or {}).get(
         "saved_cards", []) if persistent_state else []
     if isinstance(saved_state_root, list):
@@ -3336,6 +3329,7 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
             pair = card_lookup.get(str(key))
             if pair is None:
                 continue
+            valid_saved_keys.append(str(key))
             notebook, card = pair
             saved_entries.append(
                 f"""
@@ -3425,28 +3419,13 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
     <div class="app-shell" data-home-root data-notebook-root data-total-cards="{sum(len(n.cards) for n in notebooks)}">
       <section class="hero">
         <div>
-          <p class="eyebrow">Flash card notebook</p>
+          <p class="eyebrow">C++ interview practice</p>
           <h1>C++ 学习笔记卡片站</h1>
-          <p class="lede">把原始 Markdown 按题拆开，先看问题，再按按钮展开答案。每个 notebook 都能快速跳题，首页还会集中展示你保存过的题目。</p>
+          <p class="lede">按难度和专题复习 C++ 面试题，集中管理学习进度、收藏题目和个人笔记。</p>
         </div>
         <div class="hero-card">
           <div class="stat">{len(notebooks)}</div>
-          <div class="stat-label">available notebooks</div>
-        </div>
-      </section>
-      <div class="toolbar">
-        <a class="button" href="{overview_url(notebooks[0])}">进入 beginner 卡片站</a>
-        <span class="button-secondary">Markdown 是唯一内容源</span>
-      </div>
-      <section class="home-quick-shell">
-        <div class="home-collection-head">
-          <div class="card-meta">
-            <span class="muted">快捷卡片</span>
-            <span class="muted">beginner / intermediate / advanced / more</span>
-          </div>
-        </div>
-        <div class="overview-grid quick-grid">
-          {''.join(quick_tiles)}
+          <div class="stat-label">notebooks</div>
         </div>
       </section>
       <section class="home-saved-shell">
@@ -3486,11 +3465,14 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
       <section class="overview-grid">
         {''.join(tiles)}
       </section>
-
-      <p class="page-footer">本地启动后可以直接把这套页面当作练习工具使用，不需要数据库或登录。</p>
     </div>
     """
-    return render_page("C++ 学习笔记卡片站", body, boot_data=boot_payload(notebooks, persistent_state))
+    home_state = persistent_state
+    if isinstance(persistent_state, dict):
+        home_state = dict(persistent_state)
+        home_state["saved_cards"] = valid_saved_keys
+
+    return render_page("C++ 学习笔记卡片站", body, boot_data=boot_payload(notebooks, home_state))
 
 
 def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, object]] = None) -> str:
@@ -3642,7 +3624,7 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
 
       <section class="hero">
         <div>
-          <p class="eyebrow">Flash card</p>
+          <p class="eyebrow">Practice card</p>
           <h2>{html.escape(notebook.spec.title)}</h2>
           <p class="lede">先看题目，再点“显示答案”。你也可以用上一题、下一题和随机题保持复习节奏。</p>
         </div>
@@ -3663,7 +3645,6 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
           <div class="question-block">
             <div class="question-number">Question {card.number:02d}</div>
             <h1>{html.escape(card.title)}</h1>
-            <p class="question-note">默认先隐藏答案，点按钮后展开。这个页面会记住你的学习进度。</p>
             <div class="answer-summary">{section_badges(card.labels)}</div>
             <div class="reveal-actions">
               <button class="button" type="button" data-reveal-button>显示答案</button>
@@ -3698,11 +3679,12 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
                 <div class="note-subtitle">
                   Paste text, screenshots, or images. `Ctrl+V` works when the editor is focused.
                 </div>
+                <div class="note-summary" data-note-summary>No note yet</div>
               </div>
               <div class="note-head-actions">
                 <span class="note-status" data-note-status>Draft</span>
                 <span class="note-count"><strong data-note-count>0</strong> attachments</span>
-                <button class="button-secondary" type="button" data-note-toggle>Open note</button>
+                <button class="button-secondary" type="button" data-note-toggle>Edit note</button>
               </div>
             </div>
 
