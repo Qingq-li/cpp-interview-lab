@@ -52,14 +52,27 @@ int main() {
     int a = 10;
     int b = 20;
 
+    // 指针保存的是地址，可以重新指向别的对象
     int* p = &a;
+
+    // 引用是别名，初始化后就绑定到 a
+    int& r = a;
+
+    std::cout << "初始状态: a=" << a
+              << ", b=" << b
+              << ", *p=" << *p
+              << ", r=" << r << '\n';
+
+    // p 可以改指向 b
     p = &b;
 
-    int& r = a;
+    // r = b 不是“改绑”，而是把 b 的值赋给 a
     r = b;
 
-    std::cout << a << '\n';
-    std::cout << *p << '\n';
+    std::cout << "修改后:   a=" << a
+              << ", b=" << b
+              << ", *p=" << *p
+              << ", r=" << r << '\n';
 }
 ```
 
@@ -69,6 +82,7 @@ int main() {
 - `p = &b;` 说明指针可以重新指向别的对象
 - `int& r = a;` 表示 `r` 是 `a` 的引用，初始化后绑定关系不变
 - `r = b;` 这里不是“让引用改绑到 b”，而是把 `b` 的值赋给 `a`
+- 运行后你会看到 `r` 和 `a` 始终同步，因为它们是同一个对象
 
 ---
 
@@ -111,26 +125,46 @@ In an English interview, I would say:
 
 ```cpp
 #include <iostream>
+#include <string>
 
 class Counter {
 public:
     explicit Counter(int v) : value(v) {}
 
+    // const 成员函数：承诺不会修改对象的逻辑状态
     int get() const {
+        ++hits; // mutable 成员允许在 const 函数里做统计
         return value;
+    }
+
+    int calls() const {
+        return hits;
     }
 
 private:
     int value;
+    mutable int hits = 0;
 };
 
 int main() {
     const int x = 42;
     const int* p = &x;
+    int y = 7;
+    int* const q = &y;
 
     Counter c(7);
-    std::cout << c.get() << '\n';
-    std::cout << *p << '\n';
+
+    std::cout << "x = " << x << '\n';
+    std::cout << "*p = " << *p << '\n';
+    std::cout << "*q = " << *q << '\n';
+    std::cout << "c.get() = " << c.get() << '\n';
+    std::cout << "c.calls() = " << c.calls() << '\n';
+
+    // x = 100;   // ❌ 常量不能修改
+    // *p = 100;  // ❌ 不能通过指向常量的指针修改值
+
+    *q = 8; // 允许修改指针指向的值
+    std::cout << "修改后 y = " << y << '\n';
 }
 ```
 
@@ -140,6 +174,7 @@ int main() {
 - `const int* p = &x;` 表示“指向常量的指针”，不能通过 `p` 修改 `x`
 - `int get() const` 里的 `const` 表示该成员函数不会修改对象逻辑状态
 - 这段代码要重点区分“常量对象”“指向常量的指针”“const 成员函数”
+- `mutable int hits` 演示了：`const` 成员函数也可以维护缓存或统计信息
 
 ---
 
@@ -187,21 +222,45 @@ In an English interview, I would say:
 ```cpp
 #include <iostream>
 #include <memory>
+#include <string>
+#include <utility>
+
+struct Tracer {
+    explicit Tracer(std::string n) : name(std::move(n)) {
+        std::cout << "构造: " << name << '\n';
+    }
+
+    ~Tracer() {
+        std::cout << "析构: " << name << '\n';
+    }
+
+    std::string name;
+};
 
 int main() {
-    int local = 1;
-    auto ptr = std::make_unique<int>(2);
+    std::cout << "进入 main\n";
 
-    std::cout << local << " " << *ptr << '\n';
+    // 栈对象：离开作用域就自动析构
+    Tracer local("栈对象");
+
+    {
+        // 堆对象：交给 unique_ptr 托管，作用域结束时自动释放
+        auto ptr = std::make_unique<Tracer>("堆对象");
+        std::cout << "堆对象地址: " << ptr.get() << '\n';
+        std::cout << "当前还在内层作用域\n";
+    }
+
+    std::cout << "离开内层作用域后，堆对象已释放\n";
+    std::cout << "栈对象地址: " << &local << '\n';
 }
 ```
 
 ### 代码讲解
 
-- `int local = 1;` 是局部变量，通常位于栈上的自动存储期对象
-- `auto ptr = std::make_unique<int>(2);` 创建了一个堆上的整数，并交给 `unique_ptr` 管理
-- `*ptr` 表示解引用智能指针，访问它所管理的对象
-- 这段代码重点看的是：对象在堆上不等于管理方式也必须是手写 `new/delete`
+- `Tracer local("栈对象");` 是自动存储期对象，离开作用域会自动析构
+- `std::make_unique<Tracer>("堆对象")` 在堆上创建对象，并把所有权交给 `unique_ptr`
+- `ptr.get()` 可以看到原始地址，但所有权仍然在智能指针手里
+- 这段代码最重要的是观察构造和析构的打印顺序
 
 ---
 
@@ -243,20 +302,43 @@ RAII binds resource acquisition to the object life cycle. Resources are acquired
 ### 示例
 
 ```cpp
-#include <fstream>
+#include <iostream>
+#include <string>
+#include <utility>
+
+class FileLike {
+public:
+    explicit FileLike(std::string name) : name_(std::move(name)) {
+        std::cout << "打开资源: " << name_ << '\n';
+    }
+
+    ~FileLike() {
+        std::cout << "关闭资源: " << name_ << '\n';
+    }
+
+private:
+    std::string name_;
+};
 
 int main() {
-    std::ofstream file("log.txt");
-    file << "hello\n";
+    std::cout << "进入 RAII 演示\n";
+
+    {
+        FileLike conn("数据库连接");
+        std::cout << "执行查询\n";
+        std::cout << "处理中...\n";
+    } // 这里自动调用析构函数
+
+    std::cout << "离开作用域，资源已自动释放\n";
 }
 ```
 
 ### 代码讲解
 
-- `std::ofstream file("log.txt");` 在构造时打开文件
-- `file << "hello\n";` 往文件写内容
-- 离开 `main` 作用域时，`file` 析构并自动关闭文件
-- 这个例子里最重要的是观察“资源获取和释放都绑定在对象生命周期上”
+- `FileLike conn("数据库连接");` 在构造时“获取资源”
+- 离开内层作用域时，析构函数自动执行“释放资源”
+- 这就是 RAII 的核心：把资源生命周期绑定到对象生命周期
+- 这种写法对异常和早返回都更安全，因为清理逻辑不会丢失
 
 ---
 
@@ -301,28 +383,46 @@ In an English interview, I would say:
 
 ```cpp
 #include <iostream>
+#include <string>
+#include <utility>
 
-class Resource {
+class Widget {
 public:
-    Resource() {
-        std::cout << "acquire\n";
+    Widget() : name_("默认构造") {
+        std::cout << "调用默认构造函数: " << name_ << '\n';
     }
 
-    ~Resource() {
-        std::cout << "release\n";
+    explicit Widget(std::string name) : name_(std::move(name)) {
+        std::cout << "调用带参构造函数: " << name_ << '\n';
     }
+
+    Widget(const Widget& other) : name_(other.name_ + " (拷贝)") {
+        std::cout << "调用拷贝构造函数: " << name_ << '\n';
+    }
+
+    ~Widget() {
+        std::cout << "调用析构函数: " << name_ << '\n';
+    }
+
+private:
+    std::string name_;
 };
 
 int main() {
-    Resource r;
+    std::cout << "开始创建对象\n";
+    Widget a;
+    Widget b("按钮");
+    Widget c = b;
+    std::cout << "离开 main 前，对象会按逆序析构\n";
 }
 ```
 
 ### 代码讲解
 
-- `Resource r;` 创建对象时会先执行构造函数，输出 `acquire`
-- 当 `r` 离开作用域时，会自动执行析构函数，输出 `release`
-- 这段代码重点看“对象创建时初始化，销毁时清理”的生命周期顺序
+- `Widget a;` 触发默认构造函数
+- `Widget b("按钮");` 触发带参构造函数
+- `Widget c = b;` 触发拷贝构造函数
+- 离开作用域时，对象会按逆序析构，这能帮助你理解对象生命周期顺序
 
 ---
 
@@ -364,25 +464,48 @@ The key difference at the syntax level is the default access permissions and def
 ### 示例
 
 ```cpp
+#include <iostream>
+#include <string>
+#include <utility>
+
 struct Point {
-    int x;
-    int y;
+    int x = 0;
+    int y = 0;
+
+    void print() const {
+        std::cout << "Point(" << x << ", " << y << ")\n";
+    }
 };
 
 class Person {
 public:
-    explicit Person(int a) : age(a) {}
+    explicit Person(std::string name, int age)
+        : name_(std::move(name)), age_(age) {}
+
+    void print() const {
+        std::cout << "Person{name=" << name_ << ", age=" << age_ << "}\n";
+    }
 
 private:
-    int age;
+    std::string name_;
+    int age_;
 };
+
+int main() {
+    Point p{3, 4};
+    p.print();
+
+    Person person("Alice", 20);
+    person.print();
+}
 ```
 
 ### 代码讲解
 
 - `struct Point` 中成员默认是 `public`
 - `class Person` 中成员默认是 `private`
-- `explicit Person(int a)` 是构造函数，用于初始化对象
+- `Point::print()` 和 `Person::print()` 都是成员函数，说明 `struct` 和 `class` 都可以做面向对象设计
+- `explicit Person(...)` 是构造函数，用于初始化对象
 - 这段代码重点看两者的默认访问控制差异，而不是能力差异
 
 ---
@@ -430,16 +553,26 @@ In an English interview, I would say:
 
 ```cpp
 #include <iostream>
+#include <string>
 
 class Base {
 public:
+    virtual ~Base() = default;
+
     virtual void show(int x) {
         std::cout << "Base: " << x << '\n';
+    }
+
+    void show(const std::string& text) {
+        std::cout << "Base text: " << text << '\n';
     }
 };
 
 class Derived : public Base {
 public:
+    // 如果不写这一句，基类同名 overload 会被隐藏
+    using Base::show;
+
     void show(int x) override {
         std::cout << "Derived: " << x << '\n';
     }
@@ -448,6 +581,23 @@ public:
         std::cout << "Derived double: " << x << '\n';
     }
 };
+
+int main() {
+    Derived d;
+
+    // 调用派生类重写的版本
+    d.show(1);
+
+    // 调用派生类自己的重载版本
+    d.show(3.14);
+
+    // 通过 using Base::show; 把基类重载重新引入当前作用域
+    d.show(std::string("hello"));
+
+    Base* p = &d;
+    // 基类指针调用虚函数，会发生运行时多态
+    p->show(2);
+}
 ```
 
 ### 代码讲解
@@ -455,6 +605,7 @@ public:
 - `virtual void show(int x)` 表示基类函数支持运行时多态
 - `void show(int x) override` 表示派生类明确重写了基类虚函数
 - `void show(double x)` 是同名不同参数的另一个函数，体现重载
+- `using Base::show;` 用来避免“派生类同名函数把基类重载集合隐藏掉”
 - 这段代码重点是区分：重写发生在继承体系里，重载发生在参数列表不同上
 Note
 ```note
@@ -509,15 +660,32 @@ In an English interview, I would say:
 #include <string>
 
 void byValue(std::string s) {
+    std::cout << "byValue 进入前地址: " << static_cast<const void*>(s.data()) << '\n';
     s += " world";
+    std::cout << "byValue 结束后: " << s << '\n';
 }
 
 void byRef(std::string& s) {
+    std::cout << "byRef 进入时地址: " << static_cast<const void*>(s.data()) << '\n';
     s += " world";
+    std::cout << "byRef 结束后: " << s << '\n';
 }
 
 void byConstRef(const std::string& s) {
-    std::cout << s << '\n';
+    std::cout << "byConstRef 看到: " << s << '\n';
+}
+
+int main() {
+    std::string text = "hello";
+
+    std::cout << "原始 text: " << text << '\n';
+    byConstRef(text);
+    byValue(text);
+
+    std::cout << "调用 byValue 后，外部 text 仍然是: " << text << '\n';
+
+    byRef(text);
+    std::cout << "调用 byRef 后，外部 text 变成: " << text << '\n';
 }
 ```
 
@@ -526,7 +694,7 @@ void byConstRef(const std::string& s) {
 - `void byValue(std::string s)` 会复制一份字符串
 - `void byRef(std::string& s)` 可以直接修改调用方对象
 - `void byConstRef(const std::string& s)` 不复制，也不允许修改
-- 这段代码重点是观察三种参数传递方式的语义差异
+- 这段代码重点是观察三种参数传递方式的语义差异，以及外部对象是否真的被改动
 
 Note:
 ```note
@@ -580,7 +748,11 @@ public:
     explicit Box(int v) : value(v) {}
 
     Box(const Box& other) : value(other.value) {
-        std::cout << "copy ctor\n";
+        std::cout << "copy ctor, value = " << value << '\n';
+    }
+
+    void print() const {
+        std::cout << "Box value = " << value << '\n';
     }
 
 private:
@@ -589,7 +761,15 @@ private:
 
 int main() {
     Box a(10);
+    a.print();
+
+    // 这里是“新对象用已有对象初始化”，会触发拷贝构造
     Box b = a;
+    b.print();
+
+    // 下面这一行如果打开，就会看到它是赋值，不是拷贝构造
+    // Box c(0);
+    // c = a;
 }
 ```
 
@@ -598,6 +778,7 @@ int main() {
 - `Box(const Box& other)` 就是拷贝构造函数
 - `Box b = a;` 这行会触发拷贝构造，而不是拷贝赋值
 - 重点是理解“新对象初始化”才是拷贝构造的典型场景
+- `print()` 只是帮助你看清楚拷贝前后的值是否一致
 
 ---
 
@@ -658,17 +839,29 @@ public:
     }
 };
 
+class Cat : public Animal {
+public:
+    void speak() const override {
+        std::cout << "meow\n";
+    }
+};
+
 int main() {
-    std::unique_ptr<Animal> pet = std::make_unique<Dog>();
-    pet->speak();
+    std::unique_ptr<Animal> pets[2];
+    pets[0] = std::make_unique<Dog>();
+    pets[1] = std::make_unique<Cat>();
+
+    for (auto& pet : pets) {
+        pet->speak();
+    }
 }
 ```
 
 ### 代码讲解
 
 - `std::unique_ptr<Animal> pet` 表示用基类指针持有派生类对象
-- `std::make_unique<Dog>()` 实际创建的是 `Dog`
-- `pet->speak();` 会根据对象真实类型调用 `Dog::speak()`，这就是运行时多态
+- `std::make_unique<Dog>()` 和 `std::make_unique<Cat>()` 实际创建的是派生类对象
+- `pet->speak();` 会根据对象真实类型调用对应实现，这就是运行时多态
 - 重点要看的是“基类接口 + 派生类实现 + 通过基类指针调用”
 
 ---
@@ -713,10 +906,26 @@ In an English interview, I would say:
 ### 示例
 
 ```cpp
+#include <iostream>
+#include <memory>
+#include <vector>
+
 class Shape {
 public:
     virtual double area() const = 0;
     virtual ~Shape() = default;
+};
+
+class Circle : public Shape {
+public:
+    explicit Circle(double r) : radius(r) {}
+
+    double area() const override {
+        return 3.1415926 * radius * radius;
+    }
+
+private:
+    double radius;
 };
 
 class Square : public Shape {
@@ -730,6 +939,21 @@ public:
 private:
     double side;
 };
+
+int main() {
+    std::vector<std::unique_ptr<Shape>> shapes;
+    shapes.push_back(std::make_unique<Circle>(2.0));
+    shapes.push_back(std::make_unique<Square>(3.0));
+
+    double total = 0.0;
+    for (const auto& shape : shapes) {
+        double a = shape->area();
+        total += a;
+        std::cout << "area = " << a << '\n';
+    }
+
+    std::cout << "total = " << total << '\n';
+}
 ```
 
 ### 代码讲解
@@ -738,6 +962,7 @@ private:
 - `class Shape` 因为含有纯虚函数，所以是抽象类，不能直接实例化
 - `double area() const override` 表示 `Square` 对接口进行了具体实现
 - 重点看“抽象接口”和“具体实现类”的分工
+- `Circle` 和 `Square` 放进同一个容器，体现了运行时多态的实际用途
 
 Note:
 ```note
@@ -798,9 +1023,14 @@ In an English interview, I would say:
 int main() {
     std::array<int, 3> a = {1, 2, 3};
     std::vector<int> v = {1, 2, 3};
+
+    // vector 可以动态扩容
     v.push_back(4);
 
-    std::cout << a.size() << " " << v.size() << '\n';
+    std::cout << "array size = " << a.size() << '\n';
+    std::cout << "vector size = " << v.size() << '\n';
+    std::cout << "array[1] = " << a[1] << '\n';
+    std::cout << "vector[1] = " << v[1] << '\n';
 }
 ```
 
@@ -810,6 +1040,7 @@ int main() {
 - `std::vector<int> v` 的长度可以变化，所以后面可以 `push_back(4)`
 - `a.size()` 和 `v.size()` 表面接口相似，但底层容量模型不同
 - 重点要看：一个固定长度，一个动态扩容
+- 这个例子里 `array` 更像“固定长度打包好的数组”，`vector` 更像“能继续增长的动态数组”
 
 ---
 
@@ -857,11 +1088,21 @@ Because it stores continuously, is cache-friendly, has fast random access, and w
 
 int main() {
     std::vector<int> nums = {4, 1, 3, 2};
-    std::sort(nums.begin(), nums.end());
-
+    std::cout << "排序前: ";
     for (int x : nums) {
         std::cout << x << ' ';
     }
+    std::cout << '\n';
+
+    std::sort(nums.begin(), nums.end());
+
+    std::cout << "排序后: ";
+    for (int x : nums) {
+        std::cout << x << ' ';
+    }
+    std::cout << '\n';
+
+    std::cout << "nums[2] = " << nums[2] << '\n';
 }
 ```
 
@@ -871,6 +1112,7 @@ int main() {
 - `std::sort(nums.begin(), nums.end());` 用标准算法对整个容器排序
 - 范围 `for` 循环按顺序输出排序结果
 - 重点看：`vector` 和 STL 算法协作很自然，这也是它经常成为默认容器的原因
+- 这里还能看到 `vector` 支持下标访问，这在很多业务和算法代码里都很常用
 
 ---
 
@@ -912,15 +1154,24 @@ Iterators are a unified abstraction of container access methods, allowing algori
 ### 示例
 
 ```cpp
+#include <numeric>
 #include <iostream>
 #include <vector>
 
 int main() {
     std::vector<int> nums = {10, 20, 30};
 
-    for (std::vector<int>::iterator it = nums.begin(); it != nums.end(); ++it) {
+    // 通过迭代器把每个元素加 1
+    for (auto it = nums.begin(); it != nums.end(); ++it) {
+        *it += 1;
+    }
+
+    // 使用 const_iterator 只读遍历
+    for (std::vector<int>::const_iterator it = nums.cbegin(); it != nums.cend(); ++it) {
         std::cout << *it << '\n';
     }
+
+    std::cout << "sum = " << std::accumulate(nums.begin(), nums.end(), 0) << '\n';
 }
 ```
 
@@ -930,6 +1181,8 @@ int main() {
 - `nums.end()` 返回尾后迭代器，表示“结束位置的下一个”
 - `*it` 表示解引用迭代器，读取当前元素
 - 这段代码重点看：迭代器让容器访问方式统一成了类似指针的接口
+- `nums.cbegin()` 和 `nums.cend()` 表示只读迭代器，适合不修改元素的场景
+- `std::accumulate` 也说明了“容器 + 迭代器 + 算法”的组合方式
 
 ---
 
@@ -971,19 +1224,45 @@ Because bare `new/delete` can easily lead to resource leaks, missing exception p
 ### 示例
 
 ```cpp
+#include <iostream>
 #include <memory>
+#include <string>
+#include <utility>
 
-class Engine {};
+class Engine {
+public:
+    explicit Engine(std::string name) : name_(std::move(name)) {
+        std::cout << "构造 Engine: " << name_ << '\n';
+    }
+
+    ~Engine() {
+        std::cout << "析构 Engine: " << name_ << '\n';
+    }
+
+private:
+    std::string name_;
+};
 
 int main() {
-    auto engine = std::make_unique<Engine>();
+    {
+        auto engine = std::make_unique<Engine>("unique");
+        std::cout << "unique_ptr 正在持有资源\n";
+    } // 自动释放
+
+    {
+        auto shared1 = std::make_shared<Engine>("shared");
+        auto shared2 = shared1;
+        std::cout << "shared_count = " << shared1.use_count() << '\n';
+        std::cout << "shared2_count = " << shared2.use_count() << '\n';
+    } // 最后一个 shared_ptr 离开作用域时才释放
 }
 ```
 
 ### 代码讲解
 
-- `std::make_unique<Engine>()` 创建一个 `Engine` 对象并返回 `unique_ptr`
-- `auto engine` 持有这个智能指针，离开作用域会自动释放对象
+- `std::make_unique<Engine>("unique")` 创建一个 `Engine` 对象并返回 `unique_ptr`
+- `std::make_shared<Engine>("shared")` 创建共享对象并维护引用计数
+- `shared1.use_count()` 可以看到当前有多少个强引用
 - 重点是观察：这里虽然用了动态分配，但没有手写 `new/delete`
 
 ---
@@ -1101,16 +1380,34 @@ In an English interview, I would say:
 ### 示例
 
 ```cpp
+#include <iostream>
 #include <memory>
+#include <string>
+#include <utility>
 
-class Engine {};
+class Engine {
+public:
+    explicit Engine(std::string name) : name_(std::move(name)) {
+        std::cout << "构造 Engine: " << name_ << '\n';
+    }
+
+    ~Engine() {
+        std::cout << "析构 Engine: " << name_ << '\n';
+    }
+
+private:
+    std::string name_;
+};
 
 int main() {
-    std::unique_ptr<Engine> a = std::make_unique<Engine>();
+    std::unique_ptr<Engine> a = std::make_unique<Engine>("unique");
     std::unique_ptr<Engine> b = std::move(a);
 
-    std::shared_ptr<Engine> s1 = std::make_shared<Engine>();
+    std::shared_ptr<Engine> s1 = std::make_shared<Engine>("shared");
     std::shared_ptr<Engine> s2 = s1;
+
+    std::cout << "s1.use_count() = " << s1.use_count() << '\n';
+    std::cout << "s2.use_count() = " << s2.use_count() << '\n';
 }
 ```
 
@@ -1500,6 +1797,7 @@ A class usually contains:
 ```cpp
 #include <iostream>
 #include <string>
+#include <utility>
 
 class User {
 public:
@@ -1512,6 +1810,11 @@ public:
 private:
     std::string name;
 };
+
+int main() {
+    User user("Alice");
+    user.print();
+}
 ```
 
 ### 代码讲解
@@ -1520,6 +1823,7 @@ private:
 - `explicit User(std::string n)` 是构造函数，建立对象初始状态
 - `void print() const` 是成员函数，负责对外行为
 - 重点是观察一个类如何同时封装数据和行为
+- `std::move(n)` 表示把参数里的字符串资源转给成员，避免一次额外拷贝
 
 ---
 
@@ -1565,9 +1869,13 @@ In an English interview, I would say:
 ### 示例
 
 ```cpp
+#include <iostream>
+
 class Base {
 public:
-    void api() {}
+    void api() {
+        std::cout << "Base::api\n";
+    }
 
 protected:
     int sharedValue = 1;
@@ -1575,6 +1883,27 @@ protected:
 private:
     int secret = 42;
 };
+
+class Derived : public Base {
+public:
+    void demo() {
+        // 派生类可以访问 protected 成员
+        sharedValue += 10;
+        std::cout << "sharedValue = " << sharedValue << '\n';
+    }
+};
+
+int main() {
+    Base base;
+    base.api();
+
+    Derived derived;
+    derived.api();
+    derived.demo();
+
+    // base.sharedValue; // ❌ 类外不能访问 protected
+    // base.secret;      // ❌ 类外不能访问 private
+}
 ```
 
 ### 代码讲解
@@ -1583,6 +1912,7 @@ private:
 - `protected:` 下的 `sharedValue` 主要给派生类访问
 - `private:` 下的 `secret` 只能在类内部使用
 - 这段代码重点看访问控制边界
+- `Derived::demo()` 演示了 `protected` 的典型用途：让子类能扩展，但外部仍不能直接碰内部状态
 
 ---
 
@@ -1625,6 +1955,7 @@ Encapsulation is to hide the internal implementation details of an object and ex
 
 ```cpp
 #include <stdexcept>
+#include <iostream>
 
 class BankAccount {
 public:
@@ -1642,6 +1973,19 @@ public:
 private:
     int balance = 0;
 };
+
+int main() {
+    BankAccount account;
+
+    account.deposit(100);
+    std::cout << "余额 = " << account.getBalance() << '\n';
+
+    try {
+        account.deposit(-5);
+    } catch (const std::invalid_argument& e) {
+        std::cout << "捕获异常: " << e.what() << '\n';
+    }
+}
 ```
 
 ### 代码讲解
@@ -1650,6 +1994,7 @@ private:
 - `deposit(int amount)` 是唯一合法修改入口
 - `if (amount <= 0)` 体现封装不只是隐藏数据，更是维护业务约束
 - 重点要看“通过接口控制状态变化”
+- 这个例子同时演示了：封装可以配合异常把非法输入尽早拒绝掉
 
 ---
 
@@ -1706,6 +2051,15 @@ public:
         std::cout << "bark\n";
     }
 };
+
+int main() {
+    Animal animal;
+    Dog dog;
+
+    animal.eat();
+    dog.eat();
+    dog.bark();
+}
 ```
 
 ### 代码讲解
@@ -1714,6 +2068,7 @@ public:
 - `Dog` 自动拥有 `Animal` 的公开接口，比如 `eat()`
 - `bark()` 是派生类新增行为
 - 重点是理解继承表达 “Dog is an Animal” 这类关系
+- 这段代码演示的是“接口继承”，还没有涉及虚函数多态
 
 ---
 
@@ -1820,6 +2175,7 @@ In an English interview, I would say:
 
 ```cpp
 #include <iostream>
+#include <string>
 
 template <typename T>
 void printValue(T value) {
@@ -1829,6 +2185,23 @@ void printValue(T value) {
 void printValue(const char* value) {
     std::cout << "cstring: " << value << '\n';
 }
+
+int main() {
+    int a = 10;
+    double b = 3.14;
+    const char* c = "hello";
+    std::string d = "world";
+
+    // 模板版本：T 会根据实参自动推导
+    printValue(a);
+    printValue(b);
+
+    // 普通重载：字符串字面量更适合走 const char* 版本
+    printValue(c);
+
+    // std::string 没有匹配到 const char*，所以会走模板版本
+    printValue(d);
+}
 ```
 
 ### 代码讲解
@@ -1837,6 +2210,8 @@ void printValue(const char* value) {
 - `printValue(const char* value)` 是更具体的普通重载
 - 当传入字符串字面量时，编译器会优先考虑更合适的匹配
 - 重点是理解模板和重载可以同时存在
+- `printValue(d)` 说明模板版本不只用于基础类型，像 `std::string` 这样的类类型也能工作
+- 这段代码的核心价值是看清“编译器先做重载决议，再决定是否实例化模板”
 
 ---
 
@@ -2262,6 +2637,16 @@ void add() {
         ++counter;
     }
 }
+
+int main() {
+    std::thread t1(add);
+    std::thread t2(add);
+
+    t1.join();
+    t2.join();
+
+    std::cout << "counter = " << counter << '\n';
+}
 ```
 
 ### 代码讲解
@@ -2270,6 +2655,7 @@ void add() {
 - `std::lock_guard<std::mutex> lock(mtx);` 每次进入临界区时自动加锁
 - `++counter;` 是真正被保护的共享操作
 - 重点看“锁保护的是共享数据访问”
+- 这里的输出通常会稳定等于 `20000`，前提是加锁正确
 
 ---
 
@@ -2400,11 +2786,33 @@ Condition variables are used to coordinate "waiting for a certain condition to b
 
 ```cpp
 #include <condition_variable>
+#include <iostream>
 #include <mutex>
+#include <thread>
 
 std::mutex mtx;
 std::condition_variable cv;
 bool ready = false;
+int data = 0;
+
+void worker() {
+    std::unique_lock<std::mutex> lock(mtx);
+    cv.wait(lock, [] { return ready; });
+    std::cout << "worker got data = " << data << '\n';
+}
+
+int main() {
+    std::thread t(worker);
+
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        data = 42;
+        ready = true;
+    }
+
+    cv.notify_one();
+    t.join();
+}
 ```
 
 ### 代码讲解
@@ -2462,6 +2870,7 @@ The thread pool is a mechanism that creates a group of worker threads in advance
 #include <queue>
 #include <thread>
 #include <vector>
+#include <utility>
 
 class SimpleThreadPool {
 public:
@@ -2593,10 +3002,12 @@ A basic thread pool usually includes:
 ```cpp
 #include <condition_variable>
 #include <functional>
+#include <iostream>
 #include <mutex>
 #include <queue>
 #include <thread>
 #include <vector>
+#include <utility>
 
 class SimpleThreadPool {
 public:
@@ -2653,6 +3064,22 @@ private:
     std::condition_variable cv_;
     bool stop_;
 };
+
+int main() {
+    SimpleThreadPool pool(2);
+
+    pool.submit([] {
+        std::cout << "任务 1 在执行\n";
+    });
+
+    pool.submit([] {
+        std::cout << "任务 2 在执行\n";
+    });
+
+    pool.submit([] {
+        std::cout << "任务 3 在执行\n";
+    });
+}
 ```
 
 ### 代码讲解
@@ -2669,20 +3096,21 @@ private:
 
 ### 核心答案
 
-lambda 是一种匿名可调用对象，适合在使用点附近写短小逻辑，常用于算法、回调和线程任务。
+lambda 是一种匿名可调用对象，本质上通常可以看成“带 `operator()` 的临时函数对象”。它最大的价值是把短小逻辑写在使用点附近，常用于 STL 算法、回调和线程任务。
 
 
 ### English explanation
 
 In an English interview, I would say:
 
-Lambda is an anonymous callable object suitable for writing short logic near the point of use. It is often used in algorithms, callbacks and thread tasks.
+Lambda is an anonymous callable object, usually treated as a temporary function object with `operator()`. Its main value is keeping short logic close to where it is used, so it is common in STL algorithms, callbacks, and thread tasks.
 
 ### 错误回答示例
 
 - “lambda 就是语法更短的普通函数”
 - “lambda 不能捕获外部变量”
 - “lambda 只在刷题时有用”
+- “lambda 只能当回调，不能直接当对象理解”
 
 ### 面试官想听什么
 
@@ -2692,28 +3120,63 @@ Lambda is an anonymous callable object suitable for writing short logic near the
 
 ### 项目里怎么说
 
-如果一段逻辑只在当前调用点使用，而且比较短，我会优先写 lambda，而不是单独拆一个命名函数，特别是在 `std::sort`、线程任务和回调场景里。
+如果一段逻辑只在当前调用点使用，而且比较短，我会优先写 lambda，而不是单独拆一个命名函数。特别是在 `std::sort`、线程任务和回调场景里，lambda 能减少跳转阅读，让代码更贴近使用位置。
 
 ### 深入解释
 
-- lambda 最大价值是把“只用一次的小逻辑”写在调用位置附近，减少来回跳转阅读
-- 捕获列表决定是否以及如何使用外部变量，比如按值捕获、按引用捕获
+- lambda 的基本结构是：
+
+```cpp
+[capture](parameters) -> return_type {
+    // body
+}
+```
+
+- 最常见的简写是省略返回类型，让编译器自动推导
+- 捕获列表决定 lambda 能不能使用外部变量，以及如何使用外部变量
 - 在线程和异步代码里，lambda 很常被用作任务入口
-- 但 lambda 过长也会降低可读性，复杂逻辑仍然应拆成普通函数或类方法
+- 但 lambda 过长也会降低可读性，复杂逻辑仍然应该拆成普通函数或类方法
 
 ### 示例
 
 ```cpp
 #include <algorithm>
 #include <iostream>
+#include <memory>
+#include <thread>
 #include <vector>
 
 int main() {
     std::vector<int> nums = {4, 1, 3, 2};
 
+    auto hello = []() {
+        std::cout << "hello\n";
+    };
+    hello();
+
     std::sort(nums.begin(), nums.end(), [](int a, int b) {
         return a > b;
     });
+
+    int a = 10;
+    int b = 20;
+    auto mix = [a, &b]() mutable {
+        a++;
+        b++;
+        std::cout << a << ", " << b << '\n';
+    };
+    mix();
+
+    auto add = [](auto x, auto y) {
+        return x + y;
+    };
+    std::cout << add(1, 2) << '\n';
+
+    auto ptr = std::make_unique<int>(42);
+    std::thread t([p = std::move(ptr)] {
+        std::cout << *p << '\n';
+    });
+    t.join();
 
     for (int x : nums) {
         std::cout << x << ' ';
@@ -2723,11 +3186,35 @@ int main() {
 
 ### 代码讲解
 
-- `[](int a, int b) { return a > b; }` 整段就是 lambda 表达式
-- `[]` 是捕获列表，这里为空，表示不捕获外部变量
-- `(int a, int b)` 是参数列表
-- `return a > b;` 是比较规则，表示把较大的元素排到前面，也就是降序排序
-- 这段代码最值得注意的是：lambda 常常作为临时比较器传给 STL 算法
+- `[]() { ... }` 是最基础的 lambda，没有参数也没有捕获
+- `[](int a, int b) { return a > b; }` 常被当作 STL 算法的临时比较器
+- `[a, &b]` 表示 `a` 按值捕获，`b` 按引用捕获
+- `mutable` 允许修改值捕获的副本，不会改到外部原变量
+- `[](auto x, auto y)` 是泛型 lambda，C++14 起支持
+- `[p = std::move(ptr)]` 是初始化捕获，常用于把资源移动进 lambda
+- `std::thread t([p = std::move(ptr)] { ... });` 说明 lambda 很常见于线程任务封装
+- `std::sort` 里的 lambda 只是临时比较规则，写在调用点最直观
+
+### 捕获规则
+
+- `[=]`：全部按值捕获，lambda 内部读的是副本
+- `[&]`：全部按引用捕获，lambda 内部直接操作外部变量
+- `[a, &b]`：混合捕获，按需选择
+- `[x = 10]`：初始化捕获，可以创建新的成员变量
+- `mutable`：允许修改值捕获的副本
+
+### 常见坑
+
+- 引用捕获可能悬空，尤其是 lambda 存活时间比外部变量更长时
+- 线程里按引用捕获循环变量，容易拿到错误值
+- 值捕获默认是只读的，想改副本需要 `mutable`
+- 不是所有 lambda 都适合写得很长，复杂逻辑仍然应该抽出去
+
+### 本质理解
+
+- lambda 本质上通常等价于一个匿名类对象，编译器会为它生成对应的函数对象类型
+- 这个对象内部保存捕获到的数据，并通过 `operator()` 提供调用能力
+- 所以 lambda 不是“魔法函数”，而是更方便书写的函数对象
 
 ---
 
@@ -2868,12 +3355,12 @@ int main() {
 
 ### 核心答案
 
-`static` 在 C++ 中有多种常见用途：
+`static` 不是“一个固定含义”的关键字，它在不同上下文里语义不同：
 
-- 修饰局部变量，延长生命周期
-- 修饰类成员，表示属于类本身而不是某个对象
-- 修饰成员函数，表示不依赖对象实例
-- 在文件作用域限制符号可见范围
+- 修饰函数内局部变量：只初始化一次，生命周期贯穿整个程序
+- 修饰类成员变量：属于类，不属于某个对象，所有对象共享一份
+- 修饰类成员函数：没有 `this` 指针，不能直接访问非静态成员
+- 修饰命名空间或文件作用域变量/函数：限制可见范围，只在当前翻译单元内可见
 
 
 ### English explanation
@@ -2882,16 +3369,16 @@ In an English interview, I would say:
 
 `static` has several common uses in C++:
 
-- Modify local variables to extend life cycle
-- Modify class members to indicate that they belong to the class itself rather than to an object
-- Modify member functions to indicate that they do not depend on object instances
-- Limit symbol visibility in file scope
+- For a local variable, it is initialized once and keeps its value across calls
+- For a class member, it belongs to the class and is shared by all objects
+- For a static member function, there is no `this` pointer, so it cannot access non-static members directly
+- At file scope, it gives internal linkage so the symbol is visible only in the current translation unit
 
 ### 错误回答示例
 
 - “`static` 就是全局变量”
-- “加了 `static` 就线程安全”
-- “静态成员函数只是写法不同，本质和普通成员函数一样”
+- “加了 `static` 就一定线程安全”
+- “静态成员函数和普通成员函数只是写法不同”
 
 ### 面试官想听什么
 
@@ -2900,7 +3387,7 @@ In an English interview, I would say:
 
 ### 项目里怎么说
 
-我会根据上下文使用 `static`：比如用静态成员表示类级别共享状态，用静态成员函数表示不依赖对象状态的工具逻辑，而不是把它当作一个模糊关键字统一理解。
+我会根据上下文使用 `static`：比如用静态局部变量做懒加载缓存，用静态成员表示类级别共享状态，用静态成员函数表示不依赖对象状态的工具逻辑。它不是“万能全局变量”，而是一个表达作用域、生命周期和归属关系的关键字。
 
 ### 深入解释
 
@@ -2908,11 +3395,25 @@ In an English interview, I would say:
 - 静态局部变量只初始化一次，后续函数调用会复用同一份对象
 - 静态成员变量属于整个类，不属于某个单独对象
 - 静态成员函数不能直接访问非静态成员，因为它没有具体对象的 `this`
+- 文件作用域的 `static` 会把符号限制在当前 `.cpp` 文件内，常用于隐藏内部实现细节
 
 ### 示例
 
 ```cpp
 #include <iostream>
+#include <string>
+
+// 1) 静态局部变量：只初始化一次，后续调用复用同一份对象
+int getCounter() {
+    static int count = 0;
+    return ++count;
+}
+
+// 2) 静态局部变量也常用来做缓存
+std::string& getConfig() {
+    static std::string config = "default";
+    return config;
+}
 
 class Counter {
 public:
@@ -2930,19 +3431,62 @@ private:
 
 int Counter::count = 0;
 
+class Student {
+public:
+    static int count;
+
+    Student() {
+        ++count;
+    }
+};
+
+int Student::count = 0;
+
+class A {
+public:
+    int x = 10;
+    static int y;
+
+    static void foo() {
+        std::cout << y << '\n';
+    }
+};
+
+int A::y = 100;
+
 int main() {
+    std::cout << getCounter() << '\n';
+    std::cout << getCounter() << '\n';
+
+    getConfig() = "updated";
+    std::cout << getConfig() << '\n';
+
     Counter a;
     Counter b;
     std::cout << Counter::getCount() << '\n';
+
+    Student s1;
+    Student s2;
+    std::cout << Student::count << '\n';
+
+    A::foo();
 }
 ```
 
 ### 代码讲解
 
-- `static int count;` 表示 `count` 属于整个类，而不是某个对象
-- `Counter::getCount()` 是静态成员函数，可以不用对象直接通过类名调用
-- `Counter a; Counter b;` 每创建一个对象都会让 `count` 加一
-- 重点看静态成员和普通成员的归属区别
+- `static int count = 0;` 只在第一次调用函数时初始化一次，之后每次调用都复用同一个变量
+- `std::string& getConfig()` 返回的是同一个静态对象的引用，所以每次修改都会影响后续调用
+- `static int count;` 表示 `count` 属于整个类，而不是某个对象，所有实例共享同一份数据
+- `static int y;` 和 `static void foo()` 都可以直接用类名访问，不依赖具体对象
+- `static void foo()` 没有 `this`，所以它不能直接访问 `x` 这种普通成员
+
+### 一句话总结
+
+- 静态局部变量：生命周期长，函数内共享
+- 静态成员变量：类级共享
+- 静态成员函数：没有 `this`
+- 文件作用域 `static`：限制可见范围
 
 ---
 
@@ -3039,6 +3583,7 @@ In an English interview, I would say:
 ### 示例
 
 ```cpp
+#include <iostream>
 #include <string>
 
 class User {
@@ -3048,9 +3593,19 @@ public:
         return *this;
     }
 
+    void print() const {
+        std::cout << name_ << '\n';
+    }
+
 private:
     std::string name_;
 };
+
+int main() {
+    User user;
+    user.setName("Alice").setName("Bob");
+    user.print();
+}
 ```
 
 ### 代码讲解
@@ -3058,6 +3613,7 @@ private:
 - `this->name_ = name;` 显式使用 `this` 指向当前对象成员
 - `return *this;` 返回当前对象引用，支持链式调用
 - 重点是理解 `this` 是“当前对象”的隐藏指针
+- 这里的链式调用说明 `this` 常用于返回自身对象，形成更流畅的接口
 
 ---
 
@@ -3179,6 +3735,11 @@ std::ostream& operator<<(std::ostream& os, const Point& p) {
     os << "(" << p.x_ << ", " << p.y_ << ")";
     return os;
 }
+
+int main() {
+    Point p(3, 4);
+    std::cout << p << '\n';
+}
 ```
 
 ### 代码讲解
@@ -3233,11 +3794,17 @@ In an English interview, I would say:
 ### 示例
 
 ```cpp
-// math.h
-int add(int a, int b); // 声明
+#include <iostream>
 
-// math.cpp
-int add(int a, int b) { // 定义
+// 声明：先告诉编译器有这个函数
+int add(int a, int b);
+
+int main() {
+    std::cout << add(3, 4) << '\n';
+}
+
+// 定义：真正给出函数体
+int add(int a, int b) {
     return a + b;
 }
 ```
@@ -3247,6 +3814,7 @@ int add(int a, int b) { // 定义
 - `int add(int a, int b);` 只有函数签名，没有函数体，所以是声明
 - `int add(int a, int b) { ... }` 带函数体，所以是定义
 - 重点是区分“告诉编译器有这个函数”和“真正提供实现”
+- 这个例子把声明和定义放在同一个文件里，方便你直接运行验证链接前后的效果
 
 ---
 
@@ -3294,10 +3862,19 @@ They are both used to prevent header files from being included twice.
 ```cpp
 #pragma once
 
+#include <iostream>
+
 class User {
 public:
-    void run();
+    void run() {
+        std::cout << "run\n";
+    }
 };
+
+int main() {
+    User user;
+    user.run();
+}
 ```
 
 ### 代码讲解

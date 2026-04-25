@@ -830,6 +830,14 @@ a:hover {
   margin-top: 24px;
 }
 
+.home-quick-shell {
+  margin-top: 24px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 250, 243, 0.44);
+}
+
 .home-collection-head {
   display: flex;
   align-items: center;
@@ -854,6 +862,32 @@ a:hover {
 
 .saved-grid {
   margin-top: 16px;
+}
+
+.quick-grid {
+  margin-top: 16px;
+}
+
+.quick-card {
+  grid-column: span 3;
+  min-height: 160px;
+  padding: 18px;
+  background: linear-gradient(180deg, rgba(255, 250, 243, 0.98), rgba(248, 242, 233, 0.9));
+  position: relative;
+  overflow: hidden;
+}
+
+.quick-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 5px;
+  background: linear-gradient(90deg, rgba(15, 118, 110, 0.9), rgba(180, 83, 9, 0.68));
+}
+
+.quick-card h3 {
+  font-size: 1.03rem;
 }
 
 .saved-card .reveal-actions {
@@ -1435,6 +1469,10 @@ a:hover {
   }
 
   .card-tile {
+    grid-column: span 12;
+  }
+
+  .quick-card {
     grid-column: span 12;
   }
 
@@ -3235,6 +3273,7 @@ def render_page(title: str, body: str, extra_head: str = "", boot_data: Optional
 
 def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[str, object]] = None) -> str:
     tiles = []
+    quick_tiles = []
     card_lookup = {}
     for notebook in notebooks:
         card_count = len(notebook.cards)
@@ -3259,6 +3298,36 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
             """
         )
 
+    quick_hints = {
+        "beginner": "入门起点",
+        "intermediate": "中级进阶",
+        "advanced": "高级追问",
+        "coding-round": "手写强化",
+        "modern-cpp": "现代特性",
+        "stl-container-cheatsheet": "容器速查",
+        "concurrency-deep-dive": "并发专题",
+        "project-answer-templates": "项目表达",
+    }
+    quick_notebooks = notebooks
+    for notebook in quick_notebooks:
+        quick_hint = quick_hints.get(notebook.spec.slug, "快捷入口")
+        quick_tiles.append(
+            f"""
+            <a class="card-tile quick-card" href="{overview_url(notebook)}">
+              <div class="card-meta">
+                <span class="card-number">01</span>
+                <span>{len(notebook.cards)} cards</span>
+              </div>
+              <h3>{html.escape(notebook.spec.title)}</h3>
+              <p class="card-preview">{html.escape(notebook.spec.description)}</p>
+              <div class="tag-row">
+                <span class="tag">quick entry</span>
+                <span class="tag">{html.escape(quick_hint)}</span>
+              </div>
+            </a>
+            """
+        )
+
     saved_entries = []
     saved_state_root = (persistent_state or {}).get(
         "saved_cards", []) if persistent_state else []
@@ -3272,7 +3341,7 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
                 f"""
                 <article class="card-tile saved-card" data-saved-card data-key="{html.escape(str(key), quote=True)}">
                   <div class="card-meta">
-                    <span class="card-number">{card.number:02d}</span>
+                    <span class="card-number">01</span>
                     <span>{html.escape(notebook.spec.title)}</span>
                   </div>
                   <h3>{html.escape(card.title)}</h3>
@@ -3331,7 +3400,7 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
                         "html": f"""
                           <article class="card-tile note-card">
                             <div class="card-meta">
-                              <span class="card-number">{card.number:02d}</span>
+                              <span class="card-number">01</span>
                               <span>{html.escape(notebook.spec.title)}</span>
                             </div>
                             <h3>{html.escape(card.title)}</h3>
@@ -3369,6 +3438,17 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
         <a class="button" href="{overview_url(notebooks[0])}">进入 beginner 卡片站</a>
         <span class="button-secondary">Markdown 是唯一内容源</span>
       </div>
+      <section class="home-quick-shell">
+        <div class="home-collection-head">
+          <div class="card-meta">
+            <span class="muted">快捷卡片</span>
+            <span class="muted">beginner / intermediate / advanced / more</span>
+          </div>
+        </div>
+        <div class="overview-grid quick-grid">
+          {''.join(quick_tiles)}
+        </div>
+      </section>
       <section class="home-saved-shell">
         <div class="home-collection-head">
           <div class="card-meta">
@@ -3406,6 +3486,7 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
       <section class="overview-grid">
         {''.join(tiles)}
       </section>
+
       <p class="page-footer">本地启动后可以直接把这套页面当作练习工具使用，不需要数据库或登录。</p>
     </div>
     """
