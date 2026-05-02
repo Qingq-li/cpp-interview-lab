@@ -46,7 +46,7 @@ int main() {
     // - 如果未来用于数组大小、模板参数等需要编译期常量的地方，也能直接使用。
     constexpr int producer_count = 8;      // producer 线程数量
     constexpr int consumer_count = 8;      // consumer 线程数量
-    constexpr int items_per_producer = 2500000; // 每个 producer 生成的任务数
+    constexpr int items_per_producer = 250000; // 每个 producer 生成的任务数
     constexpr int payload_size = 64;       // 每个任务 payload 中的整数数量
 
     // 队列元素类型是 std::unique_ptr<WorkItem>。
@@ -111,9 +111,10 @@ int main() {
                 // memory_order_relaxed 表示这里只需要原子地递增计数，
                 // 不要求它和其他内存读写建立先后可见性关系。
                 // 因为最终正确性由 join() 和队列同步保证，计数器只是统计用途。
-                consumed_count.fetch_add(1, std::memory_order_relaxed);
+                // consumed_count.fetch_add(1, std::memory_order_relaxed);
+                consumed_count++;
 
-                if (stats[id].items % 20000 == 0) {
+                if (stats[id].items % 200000 == 0) {
                     std::cout << "[consumer " << id << "] processed "
                               << stats[id].items << " items\n";
                 }
@@ -158,9 +159,10 @@ int main() {
                 queue.push(std::move(item));
 
                 // relaxed 足够，因为这里只统计生成数量，不用它同步 WorkItem 内容。
-                produced_count.fetch_add(1, std::memory_order_relaxed);
+                // produced_count.fetch_add(1, std::memory_order_relaxed);
+                produced_count++;
 
-                if (seq % 10000 == 0) {
+                if (seq % 100000 == 0) {
                     std::cout << "[producer " << id << "] generated "
                               << seq << " items\n";
                 }

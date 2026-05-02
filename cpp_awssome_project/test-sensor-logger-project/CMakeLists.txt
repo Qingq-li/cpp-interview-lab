@@ -23,3 +23,12 @@ target_include_directories(MultiThreadUniquePtrDemo
 )
 
 target_link_libraries(MultiThreadUniquePtrDemo PRIVATE Threads::Threads)
+
+add_executable(ThreadPoolUniquePtrDemo src/ThreadPoolUniquePtrDemo.cpp)
+
+target_include_directories(ThreadPoolUniquePtrDemo
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(ThreadPoolUniquePtrDemo PRIVATE Threads::Threads)

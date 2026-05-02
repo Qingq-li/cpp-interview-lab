@@ -887,6 +887,141 @@ item     == 原来的 int*
 
 ---
 
+## `std::unique_ptr<WorkItem> item;` 不能写成 `item()`
+
+在 consumer 线程里，经常会先准备一个空的 `unique_ptr`，然后让队列把任务移动出来：
+
+```cpp
+std::unique_ptr<WorkItem> item;
+
+while (queue.wait_and_pop(item)) {
+    // item 现在拥有一个 WorkItem
+}
+```
+
+这行代码：
+
+```cpp
+std::unique_ptr<WorkItem> item;
+```
+
+是在定义一个变量。默认构造出来的 `unique_ptr` 是空的：
+
+```cpp
+item == nullptr
+```
+
+也可以写成：
+
+```cpp
+std::unique_ptr<WorkItem> item{};
+```
+
+但不能写成：
+
+```cpp
+std::unique_ptr<WorkItem> item();
+```
+
+这在 C++ 里会被解析成函数声明，而不是变量定义。它的意思近似是：
+
+```cpp
+// 声明一个叫 item 的函数
+// 不接收参数
+// 返回 std::unique_ptr<WorkItem>
+std::unique_ptr<WorkItem> item();
+```
+
+所以后面如果写：
+
+```cpp
+queue.wait_and_pop(item);
+```
+
+就会出错，因为 `item` 不是一个 `std::unique_ptr<WorkItem>` 变量，而是一个函数声明。
+
+这个语法坑通常叫 most vexing parse。规则是：如果一段代码既能被解释成声明，也能被解释成对象定义，C++ 会优先按声明解释。
+
+正确写法总结：
+
+```cpp
+std::unique_ptr<WorkItem> item;    // 正确：空 unique_ptr 变量
+std::unique_ptr<WorkItem> item{};  // 正确：空 unique_ptr 变量
+auto item = std::make_unique<WorkItem>(); // 正确：创建并拥有一个 WorkItem
+
+std::unique_ptr<WorkItem> item();  // 错误意图：这是函数声明，不是变量
+```
+
+还有一个容易混淆的写法：
+
+```cpp
+auto item = std::make_unique<WorkItem>();  // 正确：调用函数
+auto item = std::make_unique<WorkItem>{};  // 错误：make_unique 是函数，不能这样用 {}
+```
+
+`std::make_unique<WorkItem>` 是函数模板实例，必须用圆括号 `()` 调用。默认构造 `WorkItem` 时，直接写：
+
+```cpp
+auto item = std::make_unique<WorkItem>();
+```
+
+如果构造函数需要参数，就把参数放进圆括号：
+
+```cpp
+auto item = std::make_unique<WorkItem>(id, value);
+```
+
+还要区分这两种写法：
+
+```cpp
+std::unique_ptr<WorkItem> item{};
+auto item2 = std::make_unique<WorkItem>();
+```
+
+第一行只是创建一个空的 `unique_ptr`：
+
+```text
+item == nullptr
+没有 WorkItem 对象
+```
+
+适合 consumer 先准备一个空变量，等待队列把对象移动出来：
+
+```cpp
+std::unique_ptr<WorkItem> item;
+
+while (queue.wait_and_pop(item)) {
+    // 成功 pop 后，item 才拥有 WorkItem
+}
+```
+
+第二行是真的创建了一个 `WorkItem` 对象，并让 `unique_ptr` 拥有它：
+
+```text
+item2 != nullptr
+已经有一个 WorkItem 对象
+```
+
+适合 producer 创建新任务：
+
+```cpp
+auto item = std::make_unique<WorkItem>();
+item->value = 42;
+queue.push(std::move(item));
+```
+
+所以：
+
+```cpp
+std::unique_ptr<WorkItem> item{};
+item->value = 42; // 错误：item 是 nullptr
+
+auto item2 = std::make_unique<WorkItem>();
+item2->value = 42; // 正确
+```
+
+---
+
 ## 为什么队列里推荐移动
 
 在线程安全队列里，推荐：
@@ -1092,4 +1227,307 @@ mutable std::mutex mutex_
 
 原因
     -> 加锁不改变队列内容，只是线程同步细节
+```
+
+---
+
+# `producers.emplace_back(lambda)`：这就是一个线程了吗？
+
+在多线程 producer-consumer 示例里，经常会看到这种写法：
+
+```cpp
+std::vector<std::thread> producers;
+
+for (int id = 0; id < producer_count; ++id) {
+    producers.emplace_back([id, &queue, &produced_count] {
+        // producer thread body
+    });
+}
+```
+
+结论：
+
+> 是的。每执行一次 `producers.emplace_back(...)`，就会在 `producers` 这个 vector 里直接构造一个 `std::thread` 对象。  
+> `std::thread` 一旦构造完成，对应的新线程就会开始运行 lambda 里的代码。
+
+---
+
+## 这行代码到底做了什么
+
+```cpp
+producers.emplace_back([id, &queue, &produced_count] {
+    // ...
+});
+```
+
+可以近似理解成：
+
+```cpp
+std::thread t([id, &queue, &produced_count] {
+    // 这里面的代码在新线程中执行
+});
+
+producers.push_back(std::move(t));
+```
+
+区别只是：
+
+- `emplace_back(...)` 直接在 vector 末尾构造 `std::thread`。
+- 不需要先创建临时变量 `t`。
+- 语义上更直接：把一个新线程对象放进 `producers`。
+
+所以如果：
+
+```cpp
+constexpr int producer_count = 8;
+```
+
+这个循环会创建 8 个 producer 线程。
+
+---
+
+# `constexpr` 在这里的优势
+
+代码里经常会看到这种写法：
+
+```cpp
+constexpr int producer_count = 8;
+
+// 编译器直接把它当字面量 8 用
+for (int id = 0; id < producer_count; ++id) {
+    // ...
+}
+```
+
+这里的核心点是：
+
+> `producer_count` 是编译期常量。  
+> 编译生成的机器码里不一定还需要一个叫 `producer_count` 的变量。编译器可以直接把它替换成字面量 `8`。
+
+也就是说，这段代码在语义上可以近似理解成：
+
+```cpp
+for (int id = 0; id < 8; ++id) {
+    // ...
+}
+```
+
+生成后的汇编里通常没有 `producer_count` 这个变量，也就没有栈上位置，不需要用 `mov` 指令把它从内存读出来。它会被直接“嵌”进指令或编译器优化后的控制流里。
+
+---
+
+## `const int` 和 `constexpr int` 的区别
+
+| 能力 | `const int` | `constexpr int` |
+|---|---|---|
+| 编译期可用值 | 可以，如果初始化表达式本身是编译期常量 | 可以 |
+| 可用作数组大小 | 可以，常见编译器也可能对 C 风格 VLA 做扩展 | 可以，而且是标准要求 |
+| 可用作模板参数 | 不一定 | 可以 |
+| 是否强制编译期求值 | 不保证 | 保证 |
+
+对这个具体程序来说：
+
+```cpp
+constexpr int producer_count = 8;  // 明确声明：这是编译期常量
+const int producer_count = 8;      // 也可能被编译器优化成类似效果
+```
+
+运行时初始化时：
+
+```cpp
+int n = read_input();
+const int m = n;        // 合法：运行时 const
+constexpr int k = n;    // 编译错误：constexpr 必须是编译期常量
+```
+
+`const` 表示“初始化之后不能再改”；`constexpr` 表示“这个值必须能在编译期确定”。所以 `constexpr` 给读代码的人和编译器的承诺更强。
+
+---
+
+## 为什么更适合作为数量配置
+
+`constexpr` 不只是为了性能。它更重要的价值是语义和可移植性。
+
+```cpp
+constexpr int N = 8;
+
+std::array<int, N> arr;      // N 必须是编译期常量
+
+template <int N>
+struct Foo {};
+
+Foo<producer_count> f;       // producer_count 可以作为模板参数
+```
+
+在当前 producer-consumer 程序里，`producer_count` 只是控制循环次数：
+
+```cpp
+for (int id = 0; id < producer_count; ++id) {
+    producers.emplace_back([id, &queue, &produced_count] {
+        // ...
+    });
+}
+```
+
+所以 `const int producer_count = 8;` 通常也能得到同样的运行时性能。
+
+但养成写 `constexpr` 的习惯后，将来如果要把这个值用于 `std::array` 大小、模板参数、编译期分支等场景，不需要再改代码。
+
+一句话总结：
+
+> `constexpr` 让“这个值编译后就不存在了”成为更明确的语义承诺。它突破的是编码层面的变量限制，不是让数字 `8` 本身变得更快。
+
+---
+
+## lambda 就是线程函数
+
+`std::thread` 需要一个 callable，也就是“线程入口函数”。
+
+这里传进去的是 lambda：
+
+```cpp
+[id, &queue, &produced_count] {
+    for (int seq = 0; seq < items_per_producer; ++seq) {
+        auto item = std::make_unique<WorkItem>();
+        queue.push(std::move(item));
+        produced_count.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+```
+
+它就相当于：
+
+```cpp
+void producer_function(...) {
+    // producer 工作逻辑
+}
+```
+
+只是 lambda 可以方便地捕获外部变量。
+
+---
+
+## 捕获为什么这样写
+
+```cpp
+[id, &queue, &produced_count]
+```
+
+含义：
+
+| 捕获 | 方式 | 原因 |
+|---|---|---|
+| `id` | 按值捕获 | 每个线程保存自己的 producer id |
+| `queue` | 按引用捕获 | 所有 producer 往同一个队列 push |
+| `produced_count` | 按引用捕获 | 所有 producer 更新同一个 atomic 计数器 |
+
+`id` 不能随便写成引用捕获：
+
+```cpp
+// 不推荐
+producers.emplace_back([&id, &queue, &produced_count] {
+    // ...
+});
+```
+
+因为循环会继续修改 `id`。线程真正开始运行时，可能读到的已经不是创建它时的那个值。
+
+所以多线程循环创建任务时，常见规则是：
+
+```text
+loop index / thread id
+    -> 按值捕获
+
+共享队列 / 共享 atomic / 共享配置对象
+    -> 按引用捕获，但对象生命周期必须覆盖所有线程
+```
+
+---
+
+## 为什么必须 join
+
+创建线程后，主线程必须等待它们结束：
+
+```cpp
+for (auto& producer : producers) {
+    producer.join();
+}
+```
+
+`join()` 的含义是：
+
+```text
+main thread 等待 producer thread 执行完
+```
+
+如果一个 `std::thread` 对象析构时仍然是 joinable，程序会调用：
+
+```cpp
+std::terminate();
+```
+
+所以只要你创建了 `std::thread`，就必须明确选择：
+
+```cpp
+thread.join();    // 等它结束
+```
+
+或者：
+
+```cpp
+thread.detach();  // 放它自己跑，不再管理
+```
+
+在 producer-consumer 任务里，通常应该用 `join()`，因为主线程需要知道 producer 什么时候全部结束，然后才能安全地调用：
+
+```cpp
+queue.shutdown();
+```
+
+---
+
+## 和 producer-consumer 退出顺序的关系
+
+推荐顺序是：
+
+```cpp
+for (auto& producer : producers) {
+    producer.join();
+}
+
+queue.shutdown();
+
+for (auto& consumer : consumers) {
+    consumer.join();
+}
+```
+
+原因：
+
+1. 先等所有 producer 完成，保证不会再有新任务 push。
+2. 再 `shutdown()`，通知 consumer：队列清空后可以退出。
+3. 最后 join consumer，确保剩余任务都处理完。
+
+如果过早 `shutdown()`，可能 producer 还在 push，语义会混乱。
+
+如果不 `shutdown()`，consumer 可能一直阻塞在 `wait_and_pop()`。
+
+---
+
+## 最短结论
+
+```text
+producers.emplace_back(lambda)
+    -> 在 vector 里构造一个 std::thread
+    -> std::thread 构造后立即启动
+    -> lambda 是这个新线程执行的函数
+
+id
+    -> 按值捕获，避免循环变量引用问题
+
+queue / produced_count
+    -> 按引用捕获，因为多个线程共享同一份对象
+
+join()
+    -> 必须调用，用来等待线程结束
 ```

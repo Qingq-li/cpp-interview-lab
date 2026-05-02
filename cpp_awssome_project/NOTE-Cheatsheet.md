@@ -380,6 +380,147 @@ queue_.pop();                      // Destroy the (now moved-from) element
 
 ---
 
+### `unique_ptr` Variable Declaration
+
+```cpp
+std::unique_ptr<WorkItem> item;    // OK: empty unique_ptr variable
+std::unique_ptr<WorkItem> item{};  // OK: empty unique_ptr variable
+
+std::unique_ptr<WorkItem> item();  // Not a variable: function declaration
+```
+
+`item()` is parsed as a function named `item` that takes no arguments and returns `std::unique_ptr<WorkItem>`. This is the classic most vexing parse.
+
+### Empty pointer vs created object
+
+```cpp
+std::unique_ptr<WorkItem> item{};        // empty: item == nullptr
+auto item2 = std::make_unique<WorkItem>(); // owns a new WorkItem
+```
+
+Use an empty `unique_ptr` when another function will fill it:
+
+```cpp
+std::unique_ptr<WorkItem> item;
+
+queue.wait_and_pop(item);  // moves a WorkItem into item
+```
+
+Use `make_unique` when this code should create the object:
+
+```cpp
+auto item = std::make_unique<WorkItem>();
+item->value = 42;
+```
+
+`make_unique` must be called with `()`:
+
+```cpp
+auto item = std::make_unique<WorkItem>();  // OK
+auto item = std::make_unique<WorkItem>{};  // Wrong
+```
+
+> **Rule**: for an empty local object, use `T name;` or `T name{};`, not `T name();`. To create the owned object, call `std::make_unique<T>()`.
+
+---
+
+## `std::thread` + `emplace_back` Quick Check
+
+### Does this create a thread?
+
+```cpp
+std::vector<std::thread> producers;
+
+producers.emplace_back([id, &queue, &produced_count] {
+    // This code runs in the new thread.
+});
+```
+
+Yes. `emplace_back(...)` constructs a `std::thread` directly inside the vector, and a `std::thread` starts running immediately after construction.
+
+Near-equivalent mental model:
+
+```cpp
+std::thread t([id, &queue, &produced_count] {
+    // new thread body
+});
+
+producers.push_back(std::move(t));
+```
+
+### Capture rules
+
+| Capture | Meaning | Why here |
+|---|---|---|
+| `id` | capture by value | each thread keeps its own loop id |
+| `&queue` | capture by reference | all producers push into the same queue |
+| `&produced_count` | capture by reference | all producers update the same atomic counter |
+
+### Must join
+
+```cpp
+for (auto& producer : producers) {
+    producer.join();
+}
+```
+
+If a `std::thread` object is still joinable when destroyed, the program calls `std::terminate()`.
+
+> **Rule**: constructing `std::thread` starts the thread; storing it in a vector only keeps the handle so you can `join()` later.
+
+---
+
+## `constexpr` Quick Check
+
+### Why use it here?
+
+```cpp
+constexpr int producer_count = 8;
+
+for (int id = 0; id < producer_count; ++id) {
+    // same meaning as looping while id < 8
+}
+```
+
+`producer_count` is a compile-time constant. The compiler can substitute the literal `8` directly, so the generated code usually does not need a stack slot or a runtime load for `producer_count`.
+
+### `const int` vs `constexpr int`
+
+| Capability | `const int` | `constexpr int` |
+|---|---|---|
+| Compile-time value | Yes, if initialized by a constant expression | Yes |
+| Array size | Often works; C VLA may be compiler extension | Standard-guaranteed |
+| Template argument | Not always | Yes |
+| Forced compile-time evaluation | No | Yes |
+
+### Runtime `const` is not `constexpr`
+
+```cpp
+constexpr int producer_count = 8;  // compile-time constant
+const int producer_count2 = 8;     // may also be optimized similarly
+
+int n = read_input();
+const int m = n;        // OK: runtime const
+constexpr int k = n;    // error: constexpr must be known at compile time
+```
+
+### Useful for compile-time contexts
+
+```cpp
+constexpr int N = 8;
+
+std::array<int, N> arr;     // OK
+
+template <int N>
+struct Foo {};
+
+Foo<producer_count> f;      // OK
+```
+
+> **Rule**: use `constexpr` when the value is part of the program's fixed configuration and should be known at compile time. It is a stronger promise than `const int`.
+
+---
+
 ## ThreadSafeQueue Checklist
 
 ### Required Headers
@@ -445,6 +586,7 @@ bool empty() const {
 |---|---|---|
 | `return type specification for constructor invalid` | Wrote `void ClassName()` | Remove `void` |
 | `'this' was not captured for this lambda function` | Lambda uses member without capture | Use `[this]` |
+| `item` behaves like a function, not a variable | Wrote `std::unique_ptr<T> item();` | Use `std::unique_ptr<T> item;` or `item{}` |
 | `has no member named 'empty'` | Called `queue.empty()` but no such method | Add `empty()` or use `wait_and_pop()` loop |
 | `No tests were found!!!` | Wrong directory or unregistered tests | `cd build && ctest`, check `enable_testing()` + `add_test()` |
 | Undefined reference to pthread symbols | Threads not linked | `find_package(Threads REQUIRED)` + `target_link_libraries(... Threads::Threads)` |

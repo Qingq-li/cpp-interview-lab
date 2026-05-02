@@ -58,7 +58,7 @@ docker-logs:
 	UID=$(UID) GID=$(GID) HOST_PORT=$(HOST_PORT) $(COMPOSE_AUTO) logs -f
 
 rspi5-sync: # rsync the current directory to the Raspberry Pi 5, excluding the data directory and any __pycache__ directories
-	rsync -avz --exclude 'data' --exclude '__pycache__' --exclude 'cpp_awssome_project/example' . prefor@$(Raspberry_Pi_5_ip):~/flashcards
+	rsync -avz --exclude 'data' --exclude '__pycache__' --exclude 'build' --exclude 'cpp_awssome_project/example' . prefor@$(Raspberry_Pi_5_ip):~/flashcards
 
 rspi5-ssh:
 	ssh prefor@$(Raspberry_Pi_5_ip)  
