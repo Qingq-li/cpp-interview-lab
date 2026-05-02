@@ -17,7 +17,7 @@ else
 COMPOSE_AUTO = $(COMPOSE_ARM)
 endif
 
-.PHONY: help data server docker-build docker-up docker-down docker-up-x86 docker-up-arm docker-up-lan docker-logs
+.PHONY: help data server docker-build docker-up docker-down docker-up-x86 docker-up-arm docker-up-lan docker-logs rspi5-sync rspi5-ssh rspi5-run-server-test rspi5-run-server-tmux rspi5-install-autostart
 
 help:
 	@echo "Targets:"
@@ -29,6 +29,7 @@ help:
 	@echo "  make docker-up-arm HOST_PORT=8001  Use a different host port if 8000 is busy"
 	@echo "  make docker-down   Stop the container stack"
 	@echo "  make docker-build  Build the container image"
+	@echo "  make rspi5-install-autostart  Install and start the Raspberry Pi 5 boot service"
 
 data:
 	mkdir -p data
@@ -57,7 +58,7 @@ docker-logs:
 	UID=$(UID) GID=$(GID) HOST_PORT=$(HOST_PORT) $(COMPOSE_AUTO) logs -f
 
 rspi5-sync: # rsync the current directory to the Raspberry Pi 5, excluding the data directory and any __pycache__ directories
-	rsync -avz --exclude 'data' --exclude '__pycache__' . prefor@$(Raspberry_Pi_5_ip):~/flashcards
+	rsync -avz --exclude 'data' --exclude '__pycache__' --exclude 'cpp_awssome_project/example' . prefor@$(Raspberry_Pi_5_ip):~/flashcards
 
 rspi5-ssh:
 	ssh prefor@$(Raspberry_Pi_5_ip)  
@@ -68,3 +69,27 @@ rspi5-run-server-test: rspi5-sync
 
 rspi5-run-server-tmux: rspi5-sync
 	ssh prefor@$(Raspberry_Pi_5_ip) 'cd flashcards && tmux new-session -d -s flashcards_server "HOST_PORT=$${HOST_PORT:-8000} docker compose -f docker-compose.yml -f docker-compose.arm.yml up --build" || tmux send-keys -t flashcards_server "HOST_PORT=$${HOST_PORT:-8000} docker compose -f docker-compose.yml -f docker-compose.arm.yml up --build" C-m'
+
+rspi5-install-autostart: rspi5-sync
+	ssh prefor@$(Raspberry_Pi_5_ip) 'mkdir -p "$$HOME/.config/systemd/user" && printf "%s\n" \
+		"[Unit]" \
+		"Description=Flashcards Docker Compose server" \
+		"After=network-online.target docker.service" \
+		"Wants=network-online.target" \
+		"" \
+		"[Service]" \
+		"Type=simple" \
+		"WorkingDirectory=%h/flashcards" \
+		"Environment=HOST_PORT=$${HOST_PORT:-8000}" \
+		"ExecStart=/bin/sh -lc '\''UID=$$(id -u) GID=$$(id -g) HOST_PORT=$${HOST_PORT:-8000} docker compose -f docker-compose.yml -f docker-compose.arm.yml up --build'\''" \
+		"ExecStop=/bin/sh -lc '\''UID=$$(id -u) GID=$$(id -g) HOST_PORT=$${HOST_PORT:-8000} docker compose -f docker-compose.yml -f docker-compose.arm.yml down'\''" \
+		"Restart=always" \
+		"RestartSec=10" \
+		"" \
+		"[Install]" \
+		"WantedBy=default.target" \
+		> "$$HOME/.config/systemd/user/flashcards.service" && \
+		loginctl enable-linger "$$(whoami)" && \
+		systemctl --user daemon-reload && \
+		systemctl --user enable --now flashcards.service && \
+		systemctl --user --no-pager status flashcards.service'

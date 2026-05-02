@@ -9,6 +9,7 @@ import mimetypes
 import random
 import re
 import signal
+import shutil
 import sys
 import subprocess
 import threading
@@ -77,6 +78,22 @@ class Notebook:
         return {card.number: card for card in self.cards}
 
 
+@dataclass(frozen=True)
+class CodeFile:
+    relative_path: str
+    language: str
+    content: str
+
+
+@dataclass(frozen=True)
+class CodeProject:
+    number: int
+    slug: str
+    title: str
+    root_path: Path
+    files: Tuple[CodeFile, ...]
+
+
 NOTEBOOKS: Tuple[NotebookSpec, ...] = (
     NotebookSpec(
         slug="beginner",
@@ -132,13 +149,46 @@ NOTEBOOKS: Tuple[NotebookSpec, ...] = (
         source_path=ROOT / "docs" / "zh" / "project-answer-templates.md",
         description="把八股题连接到真实项目表达，适合面试回答训练。",
     ),
+    NotebookSpec(
+        slug="cpp-awesome-cheatsheet",
+        title="C++ Awesome Project Cheatsheet",
+        source_path=ROOT / "cpp_awssome_project" / "NOTE-Cheatsheet.md",
+        description="整理 CMake、CTest、类语法、lambda 捕获和 ThreadSafeQueue 的速查内容。",
+    ),
+    NotebookSpec(
+        slug="cpp-awesome-notes",
+        title="C++ Awesome Project Notes",
+        source_path=ROOT / "cpp_awssome_project" / "NOTE.md",
+        description="记录 lambda 捕获、CMake target 配置、移动语义和 const/mutable 的深入解释。",
+    ),
 )
 
+NOTE_READER_SLUGS = {"cpp-awesome-cheatsheet", "cpp-awesome-notes"}
+CODE_READING_SLUG = "code-reading"
+CODE_PROJECT_ROOT = ROOT / "cpp_awssome_project"
+CODE_PROJECT_FILE_NAMES = {"CMakeLists.txt"}
+CODE_PROJECT_EXTENSIONS = {".cpp", ".cc", ".cxx", ".hpp", ".hh", ".h", ".hxx"}
+CODE_PROJECT_EXCLUDED_DIRS = {
+    ".git",
+    "__pycache__",
+    "build",
+    "cmake-build-debug",
+    "cmake-build-release",
+    "CMakeFiles",
+    "Testing",
+    "json",
+    "thirdparty",
+    "third_party",
+    "vendor",
+    "docs",
+}
 CARD_HEADING_RE = re.compile(r"^##\s+(\d+)\.\s+(.+?)\s*$", re.M)
+GENERIC_CARD_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.M)
 SECTION_HEADING_RE = re.compile(r"^###\s+(.+?)\s*$")
 NOTE_HEADING_RE = re.compile(r"^Note:?\s*$")
 FENCE_RE = re.compile(r"^```([A-Za-z0-9_+-]*)\s*$")
 LIST_ITEM_RE = re.compile(r"^\s*-\s+(.*)$")
+ORDERED_LIST_ITEM_RE = re.compile(r"^\s*\d+\.\s+(.*)$")
 CODE_FENCE_CAPTURE_RE = re.compile(
     r"```([A-Za-z0-9_+-]*)\s*\n(.*?)\n```", re.S)
 
@@ -395,6 +445,7 @@ class PersistentStateStore:
             "saved_cards": [],
             "notebooks": {},
             "notes": {},
+            "home_notes": {},
         }
 
     def _load(self) -> Dict[str, object]:
@@ -416,12 +467,15 @@ class PersistentStateStore:
         saved_cards = data.get("saved_cards", [])
         notebooks = data.get("notebooks", {})
         notes = data.get("notes", {})
+        home_notes = data.get("home_notes", {})
         if not isinstance(saved_cards, list):
             saved_cards = []
         if not isinstance(notebooks, dict):
             notebooks = {}
         if not isinstance(notes, dict):
             notes = {}
+        if not isinstance(home_notes, dict):
+            home_notes = {}
         return {
             "saved_cards": [str(entry) for entry in saved_cards],
             "notebooks": {
@@ -437,6 +491,11 @@ class PersistentStateStore:
                 }
                 for slug, cards in notes.items()
                 if isinstance(cards, dict)
+            },
+            "home_notes": {
+                str(note_id): self._normalize_home_note_state(str(note_id), note_state)
+                for note_id, note_state in home_notes.items()
+                if isinstance(note_state, dict)
             },
         }
 
@@ -490,12 +549,35 @@ class PersistentStateStore:
                     "mimeType": mime_type if isinstance(mime_type, str) else "",
                     "createdAt": created_at if isinstance(created_at, str) else "",
                     "size": int(size_value) if isinstance(size_value, int) else 0,
+                    "storedName": attachment.get("storedName", "") if isinstance(attachment.get("storedName", ""), str) else "",
                 }
             )
         return {
             "text": text,
             "attachments": normalized_attachments,
             "updatedAt": updated_at,
+        }
+
+    @staticmethod
+    def _normalize_home_note_state(note_id: str, state: Dict[str, object]) -> Dict[str, object]:
+        normalized = PersistentStateStore._normalize_note_state(state)
+        title = state.get("title", "")
+        if not isinstance(title, str):
+            title = ""
+        created_at = state.get("createdAt", "")
+        if not isinstance(created_at, str):
+            created_at = ""
+        note_type = state.get("type", "text")
+        if not isinstance(note_type, str) or note_type not in {"text", "cpp"}:
+            note_type = "text"
+        return {
+            "id": note_id,
+            "type": note_type,
+            "title": title,
+            "text": normalized["text"],
+            "attachments": normalized["attachments"],
+            "createdAt": created_at,
+            "updatedAt": normalized["updatedAt"],
         }
 
     def snapshot(self) -> Dict[str, object]:
@@ -529,6 +611,23 @@ class PersistentStateStore:
                 notes[str(notebook_slug)] = notebook_notes
             notebook_notes[str(card_id)] = self._normalize_note_state(
                 note_state)
+            self._persist()
+
+    def save_home_note_state(self, note_id: str, note_state: Dict[str, object]) -> None:
+        with self._lock:
+            home_notes = self._state.setdefault("home_notes", {})
+            if not isinstance(home_notes, dict):
+                home_notes = {}
+                self._state["home_notes"] = home_notes
+            home_notes[str(note_id)] = self._normalize_home_note_state(
+                str(note_id), note_state)
+            self._persist()
+
+    def delete_home_note_state(self, note_id: str) -> None:
+        with self._lock:
+            home_notes = self._state.setdefault("home_notes", {})
+            if isinstance(home_notes, dict):
+                home_notes.pop(str(note_id), None)
             self._persist()
 
     def _persist(self) -> None:
@@ -778,6 +877,35 @@ a:hover {
   flex: 1 1 auto;
 }
 
+.card-tile-full {
+  grid-column: span 12;
+  min-height: 0;
+}
+
+.card-tile-full:hover {
+  transform: none;
+}
+
+.overview-card-body {
+  display: grid;
+  gap: 14px;
+  max-height: none;
+  color: var(--ink);
+}
+
+.overview-card-body .answer-section {
+  border-radius: 8px;
+  background: rgba(255, 250, 243, 0.62);
+}
+
+.overview-card-body .section-head {
+  padding: 10px 12px;
+}
+
+.overview-card-body .section-body {
+  padding: 12px;
+}
+
 .tag-row {
   display: flex;
   flex-wrap: wrap;
@@ -832,6 +960,229 @@ a:hover {
   background: #e7e8ec;
 }
 
+.overview-with-jump,
+.card-with-jump,
+.reader-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.jump-sidebar,
+.reader-sidebar {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 250, 243, 0.9);
+  box-shadow: 0 12px 28px rgba(73, 51, 30, 0.09);
+}
+
+.jump-sidebar-title,
+.reader-sidebar-title {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.jump-sidebar .question-grid {
+  grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+  gap: 8px;
+}
+
+.jump-sidebar .question-cell {
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.reader-toc {
+  display: grid;
+  gap: 6px;
+}
+
+.reader-toc a {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border-radius: 8px;
+  color: var(--ink);
+}
+
+.reader-toc a:hover {
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.reader-toc-number {
+  color: var(--accent);
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.reader-toc-title {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.reader-content {
+  display: grid;
+  gap: 18px;
+}
+
+.code-project-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.code-project-card {
+  grid-column: span 6;
+}
+
+.code-file-layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.code-file-sidebar {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 250, 243, 0.92);
+  box-shadow: 0 12px 28px rgba(73, 51, 30, 0.09);
+}
+
+.code-file-tree {
+  display: grid;
+  gap: 6px;
+}
+
+.code-file-tree a {
+  display: block;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.code-file-tree a:hover {
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.code-file-list {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.code-file-card {
+  overflow: hidden;
+}
+
+.code-file-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(81, 67, 57, 0.12);
+  background: rgba(15, 118, 110, 0.06);
+}
+
+.code-file-title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.code-reading-pre {
+  overflow: auto;
+  margin: 0;
+  padding: 18px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.62;
+  tab-size: 2;
+}
+
+.code-reading-pre code {
+  font-family: inherit;
+}
+
+.code-token-comment {
+  color: #6a9955;
+}
+
+.code-token-string {
+  color: #ce9178;
+}
+
+.code-token-preprocessor {
+  color: #c586c0;
+}
+
+.code-token-keyword {
+  color: #569cd6;
+}
+
+.code-token-type {
+  color: #4ec9b0;
+}
+
+.code-token-number {
+  color: #b5cea8;
+}
+
+.code-token-function {
+  color: #dcdcaa;
+}
+
+.code-token-member {
+  color: #9cdcfe;
+}
+
+.code-token-namespace {
+  color: #4ec9b0;
+}
+
+.reader-article {
+  scroll-margin-top: 18px;
+}
+
+.reader-article .question-block {
+  border-radius: 8px;
+}
+
+.reader-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.overview-grid-main {
+  min-width: 0;
+}
+
 .home-saved-shell {
   margin-top: 24px;
 }
@@ -842,6 +1193,111 @@ a:hover {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(255, 250, 243, 0.44);
+}
+
+.home-note-shell {
+  margin: 24px 0;
+  padding: 18px;
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 250, 243, 0.64);
+  box-shadow: 0 12px 28px rgba(73, 51, 30, 0.08);
+}
+
+.home-note-composer {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.home-note-title {
+  width: 100%;
+  border: 1px solid rgba(81, 67, 57, 0.16);
+  border-radius: 8px;
+  padding: 13px 14px;
+  background: #fffdf8;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+}
+
+.home-note-title:focus,
+.home-note-editor:focus {
+  outline: 2px solid rgba(15, 118, 110, 0.3);
+  outline-offset: 2px;
+}
+
+.note-type-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.note-type-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid rgba(81, 67, 57, 0.14);
+  border-radius: 8px;
+  background: #fffdf8;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.note-type-option input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.home-note-editor.is-code {
+  min-height: clamp(420px, 58vh, 760px);
+  max-height: 78vh;
+  background: #151311;
+  color: #f6f3ef;
+  resize: vertical;
+  tab-size: 2;
+}
+
+.home-note-card .card-number {
+  width: 40px;
+  height: 40px;
+  background: rgba(180, 83, 9, 0.12);
+  color: var(--accent-2);
+}
+
+.top-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 18px 0 24px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 250, 243, 0.64);
+}
+
+.top-nav-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 9px 13px;
+  border: 1px solid rgba(81, 67, 57, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.82);
+  color: var(--ink);
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.top-nav-link:hover,
+.top-nav-link.is-active {
+  color: #fff;
+  border-color: rgba(15, 118, 110, 0.35);
+  background: var(--accent);
 }
 
 .home-collection-head {
@@ -930,7 +1386,7 @@ a:hover {
   top: 16px;
   right: 16px;
   bottom: 16px;
-  width: min(480px, calc(100vw - 32px));
+  width: min(calc(100vw - 32px), max(66vw, 900px));
   z-index: 49;
   transform: translateX(calc(100% + 24px));
   visibility: hidden;
@@ -1011,6 +1467,51 @@ a:hover {
 
 .playground-stdin {
   min-height: 90px;
+}
+
+.playground-runner-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+  gap: 14px;
+}
+
+.playground-runner-code,
+.playground-runner-side {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.playground-runner-code .playground-editor {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.playground-runner-side .playground-stdin {
+  min-height: 120px;
+  flex: 0 0 18%;
+}
+
+.playground-runner-side .playground-output-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.playground-runner-side .playground-section {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.playground-runner-side .playground-output {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .playground-output-grid {
@@ -1189,8 +1690,82 @@ a:hover {
   padding-left: 1.25rem;
 }
 
+.answer-section ol {
+  margin: 0.25rem 0 0.95rem;
+  padding-left: 1.45rem;
+}
+
 .answer-section li + li {
   margin-top: 0.45rem;
+}
+
+.answer-section h3,
+.answer-section h4,
+.answer-section h5,
+.answer-section h6 {
+  margin: 1.1rem 0 0.45rem;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
+.answer-section h3 {
+  font-size: 1rem;
+}
+
+.answer-section h4,
+.answer-section h5,
+.answer-section h6 {
+  font-size: 0.94rem;
+}
+
+.answer-section blockquote {
+  margin: 0.8rem 0;
+  padding: 0.75rem 1rem;
+  border-left: 4px solid rgba(15, 118, 110, 0.38);
+  background: rgba(15, 118, 110, 0.06);
+  color: var(--muted);
+}
+
+.answer-section blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.answer-section hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1.1rem 0;
+}
+
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin: 0.9rem 0;
+}
+
+.answer-section table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.answer-section th,
+.answer-section td {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(81, 67, 57, 0.16);
+  vertical-align: top;
+  text-align: left;
+}
+
+.answer-section th {
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.answer-section tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.34);
 }
 
 .answer-section pre {
@@ -1350,6 +1925,23 @@ a:hover {
   line-height: 1.7;
 }
 
+.note-code {
+  overflow: auto;
+  margin: 10px 0;
+  padding: 14px;
+  border-radius: 8px;
+  background: #151311;
+  color: #f6f3ef;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.note-code code {
+  font-family: inherit;
+}
+
 .note-empty {
   color: var(--muted);
   font-size: 13px;
@@ -1496,6 +2088,24 @@ a:hover {
     grid-column: span 12;
   }
 
+  .overview-with-jump,
+  .card-with-jump,
+  .reader-layout,
+  .code-file-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .jump-sidebar,
+  .reader-sidebar,
+  .code-file-sidebar {
+    position: static;
+    max-height: none;
+  }
+
+  .code-project-card {
+    grid-column: span 12;
+  }
+
   .flashcard {
     padding: 18px;
   }
@@ -1521,6 +2131,24 @@ a:hover {
 
   .playground-drawer.is-open {
     transform: translateY(0);
+  }
+
+  .playground-drawer {
+    width: 100vw;
+    height: 88vh;
+  }
+
+  .playground-drawer[data-note-runner-root] .playground-editor {
+    min-height: 44vh;
+  }
+
+  .playground-runner-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(44vh, 1fr) auto;
+  }
+
+  .playground-runner-side .playground-output-grid {
+    grid-template-rows: none;
   }
 
   .playground-shell {
@@ -1582,6 +2210,13 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function firstTextLine(value) {
+  return String(value || '')
+    .split(/\\r?\\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith('```')) || '';
+}
+
 function todayStamp() {
   const now = new Date();
   const year = now.getFullYear();
@@ -1593,13 +2228,13 @@ function todayStamp() {
 function getBootData() {
   const node = document.getElementById('flashcards-data');
   if (!node) {
-    return { notebooks: [], persistentState: { saved_cards: [], notebooks: {}, notes: {} } };
+    return { notebooks: [], persistentState: { saved_cards: [], notebooks: {}, notes: {}, home_notes: {} } };
   }
 
   return safeJsonParse(node.textContent || node.innerText || '{}', {
     notebooks: [],
-    persistentState: { saved_cards: [], notebooks: {}, notes: {} },
-  }) || { notebooks: [], persistentState: { saved_cards: [], notebooks: {}, notes: {} } };
+    persistentState: { saved_cards: [], notebooks: {}, notes: {}, home_notes: {} },
+  }) || { notebooks: [], persistentState: { saved_cards: [], notebooks: {}, notes: {}, home_notes: {} } };
 }
 
 function getBootPersistentState() {
@@ -1615,6 +2250,10 @@ function getBootPersistentState() {
       persistentState.notes && typeof persistentState.notes === 'object'
         ? persistentState.notes
         : {},
+    home_notes:
+      persistentState.home_notes && typeof persistentState.home_notes === 'object'
+        ? persistentState.home_notes
+        : {},
   };
 }
 
@@ -1629,6 +2268,9 @@ function hydratePersistentStateFromBoot() {
       localStorage.setItem(getStoreKey(`note:${slug}:${cardId}`), JSON.stringify(noteState));
     });
   });
+  Object.entries(persistentState.home_notes || {}).forEach(([noteId, noteState]) => {
+    localStorage.setItem(getStoreKey(`home-note:${noteId}`), JSON.stringify(noteState));
+  });
 }
 
 async function refreshPersistentStateFromServer() {
@@ -1641,11 +2283,16 @@ async function refreshPersistentStateFromServer() {
   const savedCards = Array.isArray(snapshot.saved_cards) ? snapshot.saved_cards : [];
   const notebooks = snapshot.notebooks && typeof snapshot.notebooks === 'object' ? snapshot.notebooks : {};
   const notes = snapshot.notes && typeof snapshot.notes === 'object' ? snapshot.notes : {};
+  const homeNotes = snapshot.home_notes && typeof snapshot.home_notes === 'object' ? snapshot.home_notes : {};
 
   localStorage.setItem(getStoreKey('saved'), JSON.stringify(savedCards));
 
   Object.keys(localStorage).forEach((key) => {
-    if (!key.startsWith(getStoreKey('notebook:')) && !key.startsWith(getStoreKey('note:'))) {
+    if (
+      !key.startsWith(getStoreKey('notebook:'))
+      && !key.startsWith(getStoreKey('note:'))
+      && !key.startsWith(getStoreKey('home-note:'))
+    ) {
       return;
     }
     localStorage.removeItem(key);
@@ -1659,6 +2306,10 @@ async function refreshPersistentStateFromServer() {
     Object.entries(cards || {}).forEach(([cardId, noteState]) => {
       localStorage.setItem(getStoreKey(`note:${slug}:${cardId}`), JSON.stringify(noteState));
     });
+  });
+
+  Object.entries(homeNotes).forEach(([noteId, noteState]) => {
+    localStorage.setItem(getStoreKey(`home-note:${noteId}`), JSON.stringify(noteState));
   });
 }
 
@@ -1730,6 +2381,107 @@ function getNoteState(notebookSlug, cardId) {
 function saveNoteState(notebookSlug, cardId, state) {
   localStorage.setItem(getStoreKey(noteKey(notebookSlug, cardId)), JSON.stringify(state));
   syncPersistentState('note', { notebookSlug, cardId: String(cardId), noteState: state });
+}
+
+function normalizeAttachment(entry) {
+  return {
+    id: entry && typeof entry.id === 'string' ? entry.id : '',
+    filename: entry && typeof entry.filename === 'string' ? entry.filename : '',
+    url: entry && typeof entry.url === 'string' ? entry.url : '',
+    mimeType: entry && typeof entry.mimeType === 'string' ? entry.mimeType : '',
+    createdAt: entry && typeof entry.createdAt === 'string' ? entry.createdAt : '',
+    size: entry && Number.isInteger(entry.size) ? entry.size : 0,
+    storedName: entry && typeof entry.storedName === 'string' ? entry.storedName : '',
+  };
+}
+
+function normalizeHomeNote(noteId, state) {
+  const fallbackId = noteId || (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()));
+  const note = state && typeof state === 'object' ? state : {};
+  const id = typeof note.id === 'string' && note.id ? note.id : fallbackId;
+  return {
+    id,
+    type: note.type === 'cpp' ? 'cpp' : 'text',
+    title: typeof note.title === 'string' ? note.title : '',
+    text: typeof note.text === 'string' ? note.text : '',
+    attachments: Array.isArray(note.attachments)
+      ? note.attachments.map(normalizeAttachment).filter((entry) => entry.id && entry.url)
+      : [],
+    createdAt: typeof note.createdAt === 'string' ? note.createdAt : '',
+    updatedAt: typeof note.updatedAt === 'string' ? note.updatedAt : '',
+  };
+}
+
+function getHomeNotes() {
+  return Object.keys(localStorage)
+    .filter((key) => key.startsWith(getStoreKey('home-note:')))
+    .map((key) => normalizeHomeNote(key.slice(getStoreKey('home-note:').length), safeJsonParse(localStorage.getItem(key), null)))
+    .filter((note) => note.id)
+    .sort((left, right) => (right.updatedAt || right.createdAt || '').localeCompare(left.updatedAt || left.createdAt || ''));
+}
+
+function saveHomeNoteState(note) {
+  const normalized = normalizeHomeNote(note.id, note);
+  localStorage.setItem(getStoreKey(`home-note:${normalized.id}`), JSON.stringify(normalized));
+  syncPersistentState('home_note', { noteId: normalized.id, noteState: normalized });
+  return normalized;
+}
+
+function deleteHomeNoteState(noteId) {
+  localStorage.removeItem(getStoreKey(`home-note:${noteId}`));
+  syncPersistentState('home_note_delete', { noteId });
+}
+
+function compileResultParts(result) {
+  const compileParts = [];
+  if (result && result.compile_stdout) {
+    compileParts.push(result.compile_stdout);
+  }
+  if (result && result.compile_stderr) {
+    compileParts.push(result.compile_stderr);
+  }
+  if (result && !compileParts.length && result.phase === 'validation' && result.error) {
+    compileParts.push(result.error);
+  }
+  if (result && !compileParts.length && result.phase === 'compile') {
+    compileParts.push('Compilation finished without diagnostics.');
+  }
+
+  const runtimeParts = [];
+  if (result && result.run_stdout) {
+    runtimeParts.push(result.run_stdout);
+  }
+  if (result && result.run_stderr) {
+    runtimeParts.push(result.run_stderr);
+  }
+  if (result && result.phase === 'compile') {
+    runtimeParts.push('Program was not executed because compilation failed.');
+  } else if (result && result.phase === 'validation' && result.error) {
+    runtimeParts.push('Program was not executed.');
+  } else if (result && !runtimeParts.length && result.ok) {
+    runtimeParts.push('Program finished without output.');
+  }
+
+  let status = 'Waiting for code...';
+  if (result) {
+    if (result.phase === 'validation' && result.error) {
+      status = result.error;
+    } else if (result.phase === 'compile') {
+      status = 'Compilation failed.';
+    } else if (result.run_timed_out) {
+      status = 'Runtime timed out.';
+    } else if (result.ok) {
+      status = `Done. Exit code ${result.run_returncode}.`;
+    } else {
+      status = `Runtime finished with exit code ${result.run_returncode}.`;
+    }
+  }
+
+  return {
+    compile: compileParts.join('\\n').trim() || 'Compilation succeeded.',
+    runtime: runtimeParts.join('\\n').trim() || 'No runtime output.',
+    status,
+  };
 }
 
 function syncPersistentState(kind, payload) {
@@ -2009,53 +2761,15 @@ function bindPlaygroundPanel() {
       return;
     }
 
-    const compileParts = [];
-    if (result.compile_stdout) {
-      compileParts.push(result.compile_stdout);
-    }
-    if (result.compile_stderr) {
-      compileParts.push(result.compile_stderr);
-    }
-    if (!compileParts.length && result.phase === 'validation' && result.error) {
-      compileParts.push(result.error);
-    }
-    if (!compileParts.length && result.phase === 'compile') {
-      compileParts.push('Compilation finished without diagnostics.');
-    }
+    const parts = compileResultParts(result);
     if (compileOutput) {
-      compileOutput.textContent = compileParts.join('\\n').trim() || 'Compilation succeeded.';
-    }
-
-    const runtimeParts = [];
-    if (result.run_stdout) {
-      runtimeParts.push(result.run_stdout);
-    }
-    if (result.run_stderr) {
-      runtimeParts.push(result.run_stderr);
-    }
-    if (result.phase === 'compile') {
-      runtimeParts.push('Program was not executed because compilation failed.');
-    } else if (result.phase === 'validation' && result.error) {
-      runtimeParts.push('Program was not executed.');
-    } else if (!runtimeParts.length && result.ok) {
-      runtimeParts.push('Program finished without output.');
+      compileOutput.textContent = parts.compile;
     }
     if (runtimeOutput) {
-      runtimeOutput.textContent = runtimeParts.join('\\n').trim() || 'No runtime output.';
+      runtimeOutput.textContent = parts.runtime;
     }
-
     if (statusLabel) {
-      if (result.phase === 'validation' && result.error) {
-        statusLabel.textContent = result.error;
-      } else if (result.phase === 'compile') {
-        statusLabel.textContent = 'Compilation failed.';
-      } else if (result.run_timed_out) {
-        statusLabel.textContent = 'Runtime timed out.';
-      } else if (result.ok) {
-        statusLabel.textContent = `Done. Exit code ${result.run_returncode}.`;
-      } else {
-        statusLabel.textContent = `Runtime finished with exit code ${result.run_returncode}.`;
-      }
+      statusLabel.textContent = parts.status;
     }
   };
 
@@ -2247,16 +2961,8 @@ function escapeRegExp(value) {
     .split(']').join(slash + ']');
 }
 
-function renderNotePreview(text) {
-  const escaped = escapeHtml(text || '');
-  if (!escaped.trim()) {
-    return (
-      '<div class="note-empty">Paste text or screenshots here. '
-      + '`Ctrl+V` works when the note editor is focused.</div>'
-    );
-  }
-
-  let htmlText = escaped;
+function renderInlineNoteMarkdown(text) {
+  let htmlText = escapeHtml(text || '');
   htmlText = htmlText.replace(/!\\[([^\\]]*)\\]\\(([^)]+)\\)/g, (match, alt, url) => {
     const safeAlt = escapeHtml(alt || '');
     return (
@@ -2267,7 +2973,66 @@ function renderNotePreview(text) {
   htmlText = htmlText.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, (match, label, url) => (
     `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${label}</a>`
   ));
-  return htmlText.split(String.fromCharCode(10)).join('<br>');
+  return htmlText;
+}
+
+function renderNotePreview(text) {
+  const source = text || '';
+  if (!source.trim()) {
+    return (
+      '<div class="note-empty">Paste text or screenshots here. '
+      + '`Ctrl+V` works when the note editor is focused.</div>'
+    );
+  }
+
+  const lines = source.split(String.fromCharCode(10));
+  const blocks = [];
+  let buffer = [];
+  let codeBuffer = [];
+  let codeLang = '';
+  let inCode = false;
+
+  const flushText = () => {
+    if (!buffer.length) {
+      return;
+    }
+    blocks.push(renderInlineNoteMarkdown(buffer.join(String.fromCharCode(10))).split(String.fromCharCode(10)).join('<br>'));
+    buffer = [];
+  };
+
+  lines.forEach((line) => {
+    const fence = line.match(/^```([A-Za-z0-9_+-]*)\\s*$/);
+    if (fence) {
+      if (inCode) {
+        blocks.push(
+          `<pre class="note-code"><code class="language-${escapeHtml(codeLang)}">${escapeHtml(codeBuffer.join(String.fromCharCode(10)))}</code></pre>`
+        );
+        codeBuffer = [];
+        codeLang = '';
+        inCode = false;
+      } else {
+        flushText();
+        codeLang = fence[1] || 'text';
+        inCode = true;
+      }
+      return;
+    }
+
+    if (inCode) {
+      codeBuffer.push(line);
+    } else {
+      buffer.push(line);
+    }
+  });
+
+  if (inCode) {
+    blocks.push(
+      `<pre class="note-code"><code class="language-${escapeHtml(codeLang || 'text')}">${escapeHtml(codeBuffer.join(String.fromCharCode(10)))}</code></pre>`
+    );
+  }
+  flushText();
+
+  return blocks.join('');
 }
 
 function insertTextAtCursor(textarea, text) {
@@ -2596,6 +3361,104 @@ function bindHomePage() {
   if (!root) {
     return;
   }
+}
+
+function bindSavedPage() {
+  const root = document.querySelector('[data-saved-page-root]');
+  if (!root) {
+    return;
+  }
+
+  const boot = getBootData();
+  const savedRoot = document.querySelector('[data-saved-root]');
+  const savedEmpty = document.querySelector('[data-saved-empty]');
+  const savedCount = document.querySelector('[data-saved-count]');
+  const cardMap = new Map();
+
+  boot.notebooks.forEach((notebook) => {
+    notebook.cards.forEach((card) => {
+      cardMap.set(cardKey(notebook.slug, card.number), { notebook, card });
+    });
+  });
+
+  const renderSaved = () => {
+    if (!savedRoot) {
+      return;
+    }
+
+    const entries = getSavedCards();
+    const validEntries = entries
+      .map((key) => ({ key, pair: cardMap.get(key) }))
+      .filter((entry) => entry.pair);
+
+    if (validEntries.length !== entries.length) {
+      saveSavedCards(validEntries.map((entry) => entry.key));
+    }
+
+    if (savedCount) {
+      savedCount.textContent = String(validEntries.length);
+    }
+
+    if (!validEntries.length) {
+      savedRoot.innerHTML = '';
+      if (savedEmpty) {
+        savedEmpty.hidden = false;
+      }
+      return;
+    }
+
+    if (savedEmpty) {
+      savedEmpty.hidden = true;
+    }
+
+    savedRoot.innerHTML = validEntries
+      .map((entry) => {
+        const notebook = entry.pair.notebook;
+        const card = entry.pair.card;
+        return `
+          <article class="card-tile saved-card" data-saved-card data-key="${escapeHtml(entry.key)}">
+            <div class="card-meta">
+              <span class="card-number">${String(card.number).padStart(2, '0')}</span>
+              <span>${escapeHtml(notebook.title)}</span>
+            </div>
+            <h3>${escapeHtml(card.title)}</h3>
+            <p class="card-preview">${escapeHtml(card.preview)}</p>
+            <div class="tag-row">
+              ${card.labels.map((label) => `<span class="tag">${escapeHtml(label)}</span>`).join('')}
+            </div>
+            <div class="reveal-actions">
+              <a class="button" href="${escapeHtml(card.url)}">Open</a>
+              <button class="button-secondary" type="button" data-unsave-button data-key="${escapeHtml(entry.key)}">Remove</button>
+            </div>
+          </article>
+        `;
+      })
+      .join('');
+
+    savedRoot.querySelectorAll('[data-unsave-button]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const key = button.dataset.key;
+        const current = getSavedCards().filter((entry) => entry !== key);
+        saveSavedCards(current);
+        renderSaved();
+      });
+    });
+  };
+
+  renderSaved();
+
+  window.addEventListener('storage', (event) => {
+    if (!event.key || event.key.startsWith(getStoreKey('saved'))) {
+      renderSaved();
+    }
+  });
+}
+
+function bindNotesPage() {
+  const root = document.querySelector('[data-notes-root]');
+  if (!root) {
+    return;
+  }
 
   const boot = getBootData();
   const savedRoot = document.querySelector('[data-saved-root]');
@@ -2647,6 +3510,600 @@ function bindHomePage() {
       setCollectionOpen(target, !(body && !body.hidden));
     });
   });
+
+  const homeNoteList = document.querySelector('[data-home-note-list]');
+  const homeNoteEmpty = document.querySelector('[data-home-note-empty]');
+  const homeNoteCounts = Array.from(document.querySelectorAll('[data-home-note-count]'));
+  const homeNoteTitle = document.querySelector('[data-home-note-title]');
+  const homeNoteText = document.querySelector('[data-home-note-text]');
+  const homeNotePreviewShell = document.querySelector('[data-home-note-preview-shell]');
+  const homeNotePreview = document.querySelector('[data-home-note-preview]');
+  const homeNoteAttachments = document.querySelector('[data-home-note-attachments]');
+  const homeNoteStatus = document.querySelector('[data-home-note-status]');
+  const homeNoteSave = document.querySelector('[data-home-note-save]');
+  const homeNoteClear = document.querySelector('[data-home-note-clear]');
+  const homeNoteNew = document.querySelector('[data-home-note-new]');
+  const homeNoteDeleteCurrent = document.querySelector('[data-home-note-delete-current]');
+  const homeNoteTypeInputs = Array.from(document.querySelectorAll('[data-home-note-type]'));
+  const homeNoteAttachmentsShell = document.querySelector('[data-home-note-attachments-shell]');
+  const noteRunnerRoot = document.querySelector('[data-note-runner-root]');
+  const noteRunnerBackdrop = document.querySelector('[data-note-runner-backdrop]');
+  const noteRunnerClose = document.querySelector('[data-note-runner-close]');
+  const noteRunnerSave = document.querySelector('[data-note-runner-save]');
+  const noteRunnerRun = document.querySelector('[data-note-runner-run]');
+  const noteRunnerSource = document.querySelector('[data-note-runner-source]');
+  const noteRunnerStdin = document.querySelector('[data-note-runner-stdin]');
+  const noteRunnerCompileOutput = document.querySelector('[data-note-runner-compile-output]');
+  const noteRunnerRuntimeOutput = document.querySelector('[data-note-runner-runtime-output]');
+  const noteRunnerStatus = document.querySelector('[data-note-runner-status]');
+  let currentHomeNote = null;
+  let currentRunnerNoteId = '';
+
+  const createHomeNoteDraft = () => {
+    const now = new Date().toISOString();
+    const id = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    return { id, type: 'text', title: '', text: '', attachments: [], createdAt: now, updatedAt: now };
+  };
+
+  const formatNoteTime = (value) => value ? value.replace('T', ' ').slice(0, 19) : '';
+
+  const setHomeNoteStatus = (text) => {
+    if (homeNoteStatus) {
+      homeNoteStatus.textContent = text;
+    }
+  };
+
+  const selectedHomeNoteType = () => {
+    const selected = homeNoteTypeInputs.find((input) => input.checked);
+    return selected && selected.value === 'cpp' ? 'cpp' : 'text';
+  };
+
+  const renderEditorMode = () => {
+    if (!currentHomeNote) {
+      return;
+    }
+    const isCode = currentHomeNote.type === 'cpp';
+    homeNoteTypeInputs.forEach((input) => {
+      input.checked = input.value === currentHomeNote.type;
+    });
+    if (homeNoteText) {
+      homeNoteText.classList.toggle('is-code', isCode);
+      homeNoteText.spellcheck = !isCode;
+      homeNoteText.placeholder = isCode
+        ? 'Write C++17 code here. Use RUN C++ on the saved note card to compile and run.'
+        : 'Write a note. Paste text or screenshots with Ctrl+V. Markdown code blocks like ```cpp are displayed in preview.';
+    }
+    if (homeNotePreviewShell) {
+      homeNotePreviewShell.hidden = isCode;
+    }
+    if (homeNoteAttachmentsShell) {
+      homeNoteAttachmentsShell.hidden = isCode;
+    }
+    resizeHomeNoteEditor();
+  };
+
+  const resizeHomeNoteEditor = () => {
+    if (!homeNoteText || !currentHomeNote || currentHomeNote.type !== 'cpp') {
+      if (homeNoteText) {
+        homeNoteText.style.height = '';
+        homeNoteText.style.overflowY = '';
+      }
+      return;
+    }
+    const maxHeight = Math.max(420, Math.floor(window.innerHeight * 0.78));
+    homeNoteText.style.height = 'auto';
+    const nextHeight = Math.min(Math.max(homeNoteText.scrollHeight + 4, 420), maxHeight);
+    homeNoteText.style.height = `${nextHeight}px`;
+    homeNoteText.style.overflowY = homeNoteText.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  };
+
+  const syncHomeNoteEditor = () => {
+    if (!currentHomeNote) {
+      currentHomeNote = createHomeNoteDraft();
+    }
+    if (homeNoteTitle) {
+      homeNoteTitle.value = currentHomeNote.title || '';
+    }
+    if (homeNoteText) {
+      homeNoteText.value = currentHomeNote.text || '';
+    }
+    if (homeNoteDeleteCurrent) {
+      homeNoteDeleteCurrent.hidden = !getHomeNotes().some((note) => note.id === currentHomeNote.id);
+    }
+    renderEditorMode();
+  };
+
+  const renderHomeNoteAttachments = () => {
+    if (!homeNoteAttachments || !currentHomeNote) {
+      return;
+    }
+
+    if (!currentHomeNote.attachments.length) {
+      homeNoteAttachments.innerHTML = '<div class="note-empty">No attachments yet.</div>';
+      return;
+    }
+
+    homeNoteAttachments.innerHTML = currentHomeNote.attachments
+      .map((attachment) => {
+        const isImage = (attachment.mimeType || '').startsWith('image/');
+        const previewHtml = isImage
+          ? `<img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.filename || 'attachment')}" class="note-attachment-preview">`
+          : '<span class="note-file-icon">FILE</span>';
+        return `
+          <article class="note-attachment-card">
+            <div class="note-attachment-top">
+              ${previewHtml}
+              <div class="note-attachment-meta">
+                <div class="note-attachment-name">${escapeHtml(attachment.filename || 'attachment')}</div>
+                <div class="note-attachment-sub">${escapeHtml(attachment.mimeType || '')}</div>
+              </div>
+            </div>
+            <div class="note-attachment-actions">
+              <a class="button-secondary" href="${escapeHtml(attachment.url)}" target="_blank" rel="noreferrer">Open</a>
+              <button class="button-secondary" type="button" data-home-note-delete-attachment data-attachment-url="${escapeHtml(attachment.url)}">Delete</button>
+            </div>
+          </article>
+        `;
+      })
+      .join('');
+
+    homeNoteAttachments.querySelectorAll('[data-home-note-delete-attachment]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const attachmentUrl = button.dataset.attachmentUrl || '';
+        if (!attachmentUrl || !currentHomeNote) {
+          return;
+        }
+        button.disabled = true;
+        try {
+          await deleteNoteAttachment('home-notes', currentHomeNote.id, attachmentUrl);
+          currentHomeNote.attachments = currentHomeNote.attachments.filter((item) => item.url !== attachmentUrl);
+          currentHomeNote.text = currentHomeNote.text
+            .replace(new RegExp(`!\\[[^\\]]*\\]\\(${escapeRegExp(attachmentUrl)}\\)\\n?`, 'g'), '')
+            .replace(new RegExp(`\\[[^\\]]*\\]\\(${escapeRegExp(attachmentUrl)}\\)`, 'g'), '')
+            .trim();
+          currentHomeNote.updatedAt = new Date().toISOString();
+          syncHomeNoteEditor();
+          renderHomeNotePreview();
+          renderHomeNoteAttachments();
+          saveHomeNoteState(currentHomeNote);
+          renderHomeNoteCards();
+          setHomeNoteStatus(`Saved ${formatNoteTime(currentHomeNote.updatedAt)}`);
+        } catch (error) {
+          setHomeNoteStatus(error && error.message ? error.message : 'Failed to delete attachment.');
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+  };
+
+  const renderHomeNotePreview = () => {
+    if (homeNotePreview && currentHomeNote) {
+      if (currentHomeNote.type === 'cpp') {
+        homeNotePreview.innerHTML = `<pre class="note-code"><code class="language-cpp">${escapeHtml(currentHomeNote.text || '')}</code></pre>`;
+      } else {
+        homeNotePreview.innerHTML = renderNotePreview(currentHomeNote.text || '');
+      }
+    }
+  };
+
+  const renderHomeNoteCards = () => {
+    if (!homeNoteList) {
+      return;
+    }
+
+    const notes = getHomeNotes();
+    homeNoteCounts.forEach((node) => {
+      node.textContent = String(notes.length);
+    });
+    if (homeNoteEmpty) {
+      homeNoteEmpty.hidden = notes.length > 0;
+    }
+    if (!notes.length) {
+      homeNoteList.innerHTML = '';
+      return;
+    }
+
+    homeNoteList.innerHTML = notes
+      .map((note) => {
+        const preview = firstTextLine(note.text) || `${note.attachments.length} attachment(s)`;
+        const isCode = note.type === 'cpp';
+        return `
+          <article class="card-tile note-card home-note-card" data-home-note-card data-note-id="${escapeHtml(note.id)}">
+            <div class="card-meta">
+              <span class="card-number">N</span>
+              <span>${escapeHtml(formatNoteTime(note.updatedAt || note.createdAt))}</span>
+            </div>
+            <h3>${escapeHtml((note.title || '').trim() || 'Untitled note')}</h3>
+            <p class="card-preview">${escapeHtml(preview)}</p>
+            <div class="tag-row">
+              <span class="tag">${isCode ? 'C++ code' : 'text note'}</span>
+              ${isCode ? '<span class="tag">cpp17</span>' : `<span class="tag">${note.attachments.length} attachments</span>`}
+            </div>
+            <div class="reveal-actions">
+              <button class="button" type="button" data-home-note-edit data-note-id="${escapeHtml(note.id)}">Edit</button>
+              ${isCode ? `<button class="button" type="button" data-home-note-run data-note-id="${escapeHtml(note.id)}">RUN C++</button>` : ''}
+              <button class="button-secondary" type="button" data-home-note-delete data-note-id="${escapeHtml(note.id)}">Delete</button>
+            </div>
+          </article>
+        `;
+      })
+      .join('');
+
+    homeNoteList.querySelectorAll('[data-home-note-edit]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const note = getHomeNotes().find((entry) => entry.id === button.dataset.noteId);
+        if (!note) {
+          return;
+        }
+        currentHomeNote = normalizeHomeNote(note.id, note);
+        syncHomeNoteEditor();
+        renderHomeNotePreview();
+        renderHomeNoteAttachments();
+        setHomeNoteStatus(`Loaded ${formatNoteTime(currentHomeNote.updatedAt || currentHomeNote.createdAt)}`);
+        if (homeNoteTitle) {
+          homeNoteTitle.focus();
+        }
+      });
+    });
+
+    homeNoteList.querySelectorAll('[data-home-note-run]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const note = getHomeNotes().find((entry) => entry.id === button.dataset.noteId);
+        if (note) {
+          openNoteRunner(note);
+        }
+      });
+    });
+
+    homeNoteList.querySelectorAll('[data-home-note-delete]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const noteId = button.dataset.noteId || '';
+        const note = getHomeNotes().find((entry) => entry.id === noteId);
+        if (!note) {
+          return;
+        }
+        button.disabled = true;
+        try {
+          for (const attachment of note.attachments) {
+            await deleteNoteAttachment('home-notes', note.id, attachment.url);
+          }
+          deleteHomeNoteState(note.id);
+          if (currentHomeNote && currentHomeNote.id === note.id) {
+            currentHomeNote = createHomeNoteDraft();
+            syncHomeNoteEditor();
+            renderHomeNotePreview();
+            renderHomeNoteAttachments();
+          }
+          renderHomeNoteCards();
+          setHomeNoteStatus('Deleted note.');
+        } catch (error) {
+          setHomeNoteStatus(error && error.message ? error.message : 'Failed to delete note.');
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+  };
+
+  const runnerStorageKey = (noteId) => getStoreKey(`home-note-runner:${noteId}`);
+
+  const loadRunnerState = (noteId) => {
+    const raw = safeJsonParse(localStorage.getItem(runnerStorageKey(noteId)), null) || {};
+    return {
+      source: typeof raw.source === 'string' ? raw.source : undefined,
+      stdin: typeof raw.stdin === 'string' ? raw.stdin : '',
+      lastResult: raw.lastResult && typeof raw.lastResult === 'object' ? raw.lastResult : null,
+    };
+  };
+
+  const saveRunnerState = (noteId, state) => {
+    localStorage.setItem(runnerStorageKey(noteId), JSON.stringify(state));
+  };
+
+  const setRunnerOutput = (result) => {
+    const parts = compileResultParts(result);
+    if (noteRunnerCompileOutput) {
+      noteRunnerCompileOutput.textContent = result ? parts.compile : 'Waiting for code...';
+    }
+    if (noteRunnerRuntimeOutput) {
+      noteRunnerRuntimeOutput.textContent = result ? parts.runtime : 'RUN to see output.';
+    }
+    if (noteRunnerStatus) {
+      noteRunnerStatus.textContent = result ? parts.status : 'Closed';
+    }
+  };
+
+  const setNoteRunnerOpen = (open) => {
+    if (!noteRunnerRoot) {
+      return;
+    }
+    noteRunnerRoot.classList.toggle('is-open', open);
+    noteRunnerRoot.setAttribute('aria-hidden', open ? 'false' : 'true');
+    if (noteRunnerBackdrop) {
+      noteRunnerBackdrop.hidden = !open;
+      noteRunnerBackdrop.classList.toggle('is-open', open);
+    }
+    document.body.classList.toggle('playground-open', open);
+    if (open && noteRunnerSource) {
+      noteRunnerSource.focus();
+    }
+  };
+
+  const openNoteRunner = (note) => {
+    if (!noteRunnerRoot || !note || note.type !== 'cpp') {
+      return;
+    }
+    currentRunnerNoteId = note.id;
+    const state = loadRunnerState(note.id);
+    if (noteRunnerSource) {
+      noteRunnerSource.value = state.source === undefined ? note.text : state.source;
+    }
+    if (noteRunnerStdin) {
+      noteRunnerStdin.value = state.stdin;
+    }
+    setRunnerOutput(state.lastResult);
+    if (noteRunnerStatus) {
+      noteRunnerStatus.textContent = `Loaded ${note.title || 'C++ note'}.`;
+    }
+    setNoteRunnerOpen(true);
+  };
+
+  const persistCurrentRunnerState = (lastResult) => {
+    if (!currentRunnerNoteId) {
+      return;
+    }
+    const existing = loadRunnerState(currentRunnerNoteId);
+    const state = {
+      source: noteRunnerSource ? noteRunnerSource.value : existing.source,
+      stdin: noteRunnerStdin ? noteRunnerStdin.value : existing.stdin,
+      lastResult: lastResult === undefined ? existing.lastResult : lastResult,
+    };
+    saveRunnerState(currentRunnerNoteId, state);
+  };
+
+  const saveCurrentHomeNote = () => {
+    if (!currentHomeNote) {
+      currentHomeNote = createHomeNoteDraft();
+    }
+    currentHomeNote.type = selectedHomeNoteType();
+    currentHomeNote.title = homeNoteTitle ? homeNoteTitle.value : currentHomeNote.title;
+    currentHomeNote.text = homeNoteText ? homeNoteText.value : currentHomeNote.text;
+    if (!currentHomeNote.createdAt) {
+      currentHomeNote.createdAt = new Date().toISOString();
+    }
+    currentHomeNote.updatedAt = new Date().toISOString();
+    currentHomeNote = saveHomeNoteState(currentHomeNote);
+    syncHomeNoteEditor();
+    renderHomeNotePreview();
+    renderHomeNoteAttachments();
+    renderHomeNoteCards();
+    setHomeNoteStatus(`Saved ${formatNoteTime(currentHomeNote.updatedAt)}`);
+  };
+
+  const resetHomeNoteEditor = () => {
+    currentHomeNote = createHomeNoteDraft();
+    syncHomeNoteEditor();
+    renderHomeNotePreview();
+    renderHomeNoteAttachments();
+    setHomeNoteStatus('Draft');
+  };
+
+  if (homeNoteTitle) {
+    homeNoteTitle.addEventListener('input', () => {
+      if (!currentHomeNote) {
+        currentHomeNote = createHomeNoteDraft();
+      }
+      currentHomeNote.title = homeNoteTitle.value;
+      setHomeNoteStatus('Draft');
+    });
+  }
+
+  homeNoteTypeInputs.forEach((input) => {
+    input.addEventListener('change', () => {
+      if (!currentHomeNote) {
+        currentHomeNote = createHomeNoteDraft();
+      }
+      currentHomeNote.type = selectedHomeNoteType();
+      renderEditorMode();
+      renderHomeNotePreview();
+      setHomeNoteStatus('Draft');
+    });
+  });
+
+  if (homeNoteText) {
+    homeNoteText.addEventListener('input', () => {
+      if (!currentHomeNote) {
+        currentHomeNote = createHomeNoteDraft();
+      }
+      currentHomeNote.text = homeNoteText.value;
+      resizeHomeNoteEditor();
+      renderHomeNotePreview();
+      setHomeNoteStatus('Draft');
+    });
+
+    homeNoteText.addEventListener('paste', async (event) => {
+      const clipboardItems = Array.from((event.clipboardData && event.clipboardData.items) || []);
+      const imageFiles = clipboardItems
+        .map((item) => item.kind === 'file' ? item.getAsFile() : null)
+        .filter((file) => file && file.type && file.type.startsWith('image/'));
+
+      if (!imageFiles.length) {
+        return;
+      }
+      if ((currentHomeNote && currentHomeNote.type === 'cpp') || selectedHomeNoteType() === 'cpp') {
+        return;
+      }
+
+      event.preventDefault();
+      if (!currentHomeNote) {
+        currentHomeNote = createHomeNoteDraft();
+      }
+      const insertedSnippets = [];
+      try {
+        for (const file of imageFiles) {
+          const attachment = await uploadNoteAttachment('home-notes', currentHomeNote.id, file);
+          currentHomeNote.attachments.push(attachment);
+          insertedSnippets.push(`![${attachment.filename}](${attachment.url})`);
+        }
+        insertTextAtCursor(homeNoteText, `${insertedSnippets.join(String.fromCharCode(10))}${String.fromCharCode(10)}`);
+        currentHomeNote.text = homeNoteText.value;
+        currentHomeNote.updatedAt = new Date().toISOString();
+        saveHomeNoteState(currentHomeNote);
+        renderHomeNotePreview();
+        renderHomeNoteAttachments();
+        renderHomeNoteCards();
+        setHomeNoteStatus(`Saved ${formatNoteTime(currentHomeNote.updatedAt)}`);
+      } catch (error) {
+        setHomeNoteStatus(error && error.message ? error.message : 'Failed to upload clipboard image.');
+      }
+    });
+  }
+
+  if (homeNoteSave) {
+    homeNoteSave.addEventListener('click', saveCurrentHomeNote);
+  }
+
+  if (homeNoteClear) {
+    homeNoteClear.addEventListener('click', resetHomeNoteEditor);
+  }
+
+  if (homeNoteNew) {
+    homeNoteNew.addEventListener('click', () => {
+      resetHomeNoteEditor();
+      if (homeNoteTitle) {
+        homeNoteTitle.focus();
+      }
+    });
+  }
+
+  if (homeNoteDeleteCurrent) {
+    homeNoteDeleteCurrent.addEventListener('click', async () => {
+      if (!currentHomeNote || !getHomeNotes().some((note) => note.id === currentHomeNote.id)) {
+        resetHomeNoteEditor();
+        return;
+      }
+      homeNoteDeleteCurrent.disabled = true;
+      try {
+        for (const attachment of currentHomeNote.attachments) {
+          await deleteNoteAttachment('home-notes', currentHomeNote.id, attachment.url);
+        }
+        deleteHomeNoteState(currentHomeNote.id);
+        resetHomeNoteEditor();
+        renderHomeNoteCards();
+        setHomeNoteStatus('Deleted note.');
+      } catch (error) {
+        setHomeNoteStatus(error && error.message ? error.message : 'Failed to delete note.');
+      } finally {
+        homeNoteDeleteCurrent.disabled = false;
+      }
+    });
+  }
+
+  if (noteRunnerClose) {
+    noteRunnerClose.addEventListener('click', () => setNoteRunnerOpen(false));
+  }
+
+  if (noteRunnerBackdrop) {
+    noteRunnerBackdrop.addEventListener('click', () => setNoteRunnerOpen(false));
+  }
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && noteRunnerRoot && noteRunnerRoot.classList.contains('is-open')) {
+      setNoteRunnerOpen(false);
+    }
+  });
+
+  if (noteRunnerSource) {
+    noteRunnerSource.addEventListener('input', () => persistCurrentRunnerState(undefined));
+  }
+
+  if (noteRunnerStdin) {
+    noteRunnerStdin.addEventListener('input', () => persistCurrentRunnerState(undefined));
+  }
+
+  if (noteRunnerSave) {
+    noteRunnerSave.addEventListener('click', () => {
+      if (!currentRunnerNoteId || !noteRunnerSource) {
+        return;
+      }
+      const note = getHomeNotes().find((entry) => entry.id === currentRunnerNoteId);
+      if (!note) {
+        return;
+      }
+      note.type = 'cpp';
+      note.text = noteRunnerSource.value;
+      note.updatedAt = new Date().toISOString();
+      saveHomeNoteState(note);
+      persistCurrentRunnerState(undefined);
+      renderHomeNoteCards();
+      if (currentHomeNote && currentHomeNote.id === note.id) {
+        currentHomeNote = normalizeHomeNote(note.id, note);
+        syncHomeNoteEditor();
+        renderHomeNotePreview();
+      }
+      if (noteRunnerStatus) {
+        noteRunnerStatus.textContent = `Saved ${formatNoteTime(note.updatedAt)}.`;
+      }
+    });
+  }
+
+  if (noteRunnerRun) {
+    noteRunnerRun.addEventListener('click', async () => {
+      if (!currentRunnerNoteId) {
+        return;
+      }
+      const payload = {
+        source: noteRunnerSource ? noteRunnerSource.value : '',
+        stdin: noteRunnerStdin ? noteRunnerStdin.value : '',
+        language: 'cpp17',
+        notebook_slug: 'home-notes',
+        card_id: currentRunnerNoteId,
+      };
+
+      noteRunnerRun.disabled = true;
+      const previousLabel = noteRunnerRun.textContent;
+      noteRunnerRun.textContent = 'RUNNING...';
+      if (noteRunnerStatus) {
+        noteRunnerStatus.textContent = 'Compiling...';
+      }
+
+      try {
+        const response = await fetch('/_api/compile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json();
+        persistCurrentRunnerState(result);
+        setRunnerOutput(result);
+      } catch (error) {
+        const result = {
+          ok: false,
+          phase: 'network',
+          error: `Request failed: ${error && error.message ? error.message : error}`,
+        };
+        persistCurrentRunnerState(result);
+        if (noteRunnerCompileOutput) {
+          noteRunnerCompileOutput.textContent = result.error;
+        }
+        if (noteRunnerRuntimeOutput) {
+          noteRunnerRuntimeOutput.textContent = 'Program was not executed.';
+        }
+        if (noteRunnerStatus) {
+          noteRunnerStatus.textContent = result.error;
+        }
+      } finally {
+        noteRunnerRun.disabled = false;
+        noteRunnerRun.textContent = previousLabel;
+      }
+    });
+  }
+
+  window.addEventListener('resize', resizeHomeNoteEditor);
+
+  resetHomeNoteEditor();
+  renderHomeNoteCards();
 
   const renderSaved = () => {
     if (!savedRoot) {
@@ -2722,7 +4179,13 @@ function bindHomePage() {
   renderSaved();
 
   window.addEventListener('storage', (event) => {
-    if (!event.key || event.key.startsWith(getStoreKey('saved')) || event.key.startsWith(getStoreKey('notebook:'))) {
+    if (
+      !event.key
+      || event.key.startsWith(getStoreKey('saved'))
+      || event.key.startsWith(getStoreKey('notebook:'))
+      || event.key.startsWith(getStoreKey('home-note:'))
+    ) {
+      renderHomeNoteCards();
       renderSaved();
       const activeNotebook = document.querySelector('[data-overview-root]');
       if (activeNotebook) {
@@ -2758,6 +4221,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     bindHomePage();
+    bindSavedPage();
+    bindNotesPage();
     bindOverviewPage();
     bindCardPage();
     bindPlaygroundPanel();
@@ -2786,12 +4251,19 @@ def load_notebook(spec: NotebookSpec) -> Notebook:
     cards: List[Card] = []
     matches = list(CARD_HEADING_RE.finditer(text))
 
-    for index, match in enumerate(matches):
-        number = int(match.group(1))
-        title = match.group(2).strip()
+    if matches:
+        heading_matches = matches
+        numbered = True
+    else:
+        heading_matches = list(GENERIC_CARD_HEADING_RE.finditer(text))
+        numbered = False
+
+    for index, match in enumerate(heading_matches):
+        number = int(match.group(1)) if numbered else index + 1
+        title = match.group(2).strip() if numbered else match.group(1).strip()
         body_start = match.end()
-        body_end = matches[index + 1].start() if index + \
-            1 < len(matches) else len(text)
+        body_end = heading_matches[index + 1].start() if index + \
+            1 < len(heading_matches) else len(text)
         body = text[body_start:body_end].strip("\n")
         if not body.strip():
             continue
@@ -2818,14 +4290,11 @@ def parse_sections(body: str) -> List[Section]:
 
     def flush() -> None:
         nonlocal current_title, buffer
-        if current_title is None:
-            buffer = []
-            return
         raw = "\n".join(buffer).strip("\n")
         if raw.strip():
             sections.append(
                 Section(
-                    title=current_title,
+                    title=current_title or "内容",
                     raw=raw,
                     html=render_markdown(raw),
                 )
@@ -2865,6 +4334,9 @@ def render_markdown(text: str) -> str:
     output: List[str] = []
     paragraph: List[str] = []
     list_items: List[str] = []
+    ordered_list_items: List[str] = []
+    blockquote: List[str] = []
+    table_rows: List[List[str]] = []
     in_code = False
     code_lang = ""
     code_lines: List[str] = []
@@ -2879,12 +4351,47 @@ def render_markdown(text: str) -> str:
         paragraph = []
 
     def flush_list() -> None:
-        nonlocal list_items
+        nonlocal list_items, ordered_list_items
         if list_items:
             items = "".join(
                 f"<li>{render_inline(item)}</li>" for item in list_items)
             output.append(f"<ul>{items}</ul>")
         list_items = []
+        if ordered_list_items:
+            items = "".join(
+                f"<li>{render_inline(item)}</li>" for item in ordered_list_items)
+            output.append(f"<ol>{items}</ol>")
+        ordered_list_items = []
+
+    def flush_blockquote() -> None:
+        nonlocal blockquote
+        if blockquote:
+            body = render_markdown("\n".join(blockquote))
+            output.append(f"<blockquote>{body}</blockquote>")
+        blockquote = []
+
+    def flush_table() -> None:
+        nonlocal table_rows
+        if len(table_rows) < 2:
+            for row in table_rows:
+                output.append(f"<p>{render_inline(' | '.join(row))}</p>")
+            table_rows = []
+            return
+
+        header = table_rows[0]
+        body_rows = table_rows[2:] if is_markdown_table_separator(table_rows[1]) else table_rows[1:]
+        head_html = "".join(f"<th>{render_inline(cell)}</th>" for cell in header)
+        body_html = "".join(
+            "<tr>" + "".join(f"<td>{render_inline(cell)}</td>" for cell in row) + "</tr>"
+            for row in body_rows
+        )
+        output.append(
+            "<div class=\"table-wrap\"><table>"
+            f"<thead><tr>{head_html}</tr></thead>"
+            f"<tbody>{body_html}</tbody>"
+            "</table></div>"
+        )
+        table_rows = []
 
     def flush_code() -> None:
         nonlocal code_lines, code_lang
@@ -2925,16 +4432,64 @@ def render_markdown(text: str) -> str:
         if not stripped:
             flush_paragraph()
             flush_list()
+            flush_blockquote()
+            flush_table()
+            continue
+
+        table_row = parse_markdown_table_row(stripped)
+        if table_row is not None:
+            flush_paragraph()
+            flush_list()
+            flush_blockquote()
+            table_rows.append(table_row)
+            continue
+
+        flush_table()
+
+        if stripped in {"---", "***", "___"}:
+            flush_paragraph()
+            flush_list()
+            flush_blockquote()
+            output.append("<hr>")
+            continue
+
+        if stripped.startswith(">"):
+            flush_paragraph()
+            flush_list()
+            quote_line = stripped[1:].strip()
+            blockquote.append(quote_line)
+            continue
+
+        flush_blockquote()
+
+        heading = re.match(r"^(#{3,6})\s+(.+?)\s*$", stripped)
+        if heading:
+            flush_paragraph()
+            flush_list()
+            level = len(heading.group(1))
+            output.append(
+                f"<h{level}>{render_inline(heading.group(2).strip())}</h{level}>")
             continue
 
         bullet = LIST_ITEM_RE.match(line)
         if bullet:
             flush_paragraph()
+            flush_blockquote()
             list_items.append(bullet.group(1).strip())
+            continue
+
+        ordered = ORDERED_LIST_ITEM_RE.match(line)
+        if ordered:
+            flush_paragraph()
+            flush_blockquote()
+            ordered_list_items.append(ordered.group(1).strip())
             continue
 
         if list_items and line.startswith("  "):
             list_items[-1] = f"{list_items[-1]} {stripped}"
+            continue
+        if ordered_list_items and line.startswith("  "):
+            ordered_list_items[-1] = f"{ordered_list_items[-1]} {stripped}"
             continue
 
         flush_list()
@@ -2945,7 +4500,23 @@ def render_markdown(text: str) -> str:
 
     flush_paragraph()
     flush_list()
+    flush_blockquote()
+    flush_table()
     return "".join(output)
+
+
+def parse_markdown_table_row(line: str) -> Optional[List[str]]:
+    if "|" not in line:
+        return None
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return None
+    cells = stripped.strip("|").split("|")
+    return [cell.strip() for cell in cells]
+
+
+def is_markdown_table_separator(row: Sequence[str]) -> bool:
+    return all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in row)
 
 
 def render_inline(text: str) -> str:
@@ -3031,7 +4602,7 @@ def boot_payload(
 ) -> Dict[str, object]:
     return {
         "notebooks": [notebook_payload(notebook) for notebook in notebooks],
-        "persistentState": persistent_state or {"saved_cards": [], "notebooks": {}, "notes": {}},
+        "persistentState": persistent_state or {"saved_cards": [], "notebooks": {}, "notes": {}, "home_notes": {}},
     }
 
 
@@ -3237,6 +4808,14 @@ def delete_note_attachment_file(state_dir: Path, notebook_slug: str, card_id: st
         pass
 
 
+def delete_note_attachment_tree(state_dir: Path, notebook_slug: str, card_id: str) -> None:
+    attachment_dir = note_attachment_dir(state_dir, notebook_slug, card_id)
+    try:
+        shutil.rmtree(attachment_dir)
+    except FileNotFoundError:
+        pass
+
+
 def attachment_url_to_stored_name(url: str) -> Optional[str]:
     parsed = urlparse(url)
     if not parsed.path.startswith("/_attachments/"):
@@ -3260,6 +4839,10 @@ def card_url(notebook: Notebook, card: Card) -> str:
 
 def overview_url(notebook: Notebook) -> str:
     return f"/{notebook.spec.slug}"
+
+
+def flashcards_url(notebook: Notebook) -> str:
+    return f"/{notebook.spec.slug}/cards"
 
 
 def random_url(notebook: Notebook) -> str:
@@ -3299,29 +4882,44 @@ def render_page(title: str, body: str, extra_head: str = "", boot_data: Optional
 </html>"""
 
 
-def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[str, object]] = None) -> str:
-    tiles = []
+def nav_label(notebook: Notebook) -> str:
+    words = notebook.spec.slug.replace("-", " ").split()
+    return " ".join(word.capitalize() for word in words)
+
+
+def notebook_default_url(notebook: Notebook) -> str:
+    return overview_url(notebook)
+
+
+def render_top_nav(notebooks: Sequence[Notebook], active: str = "home") -> str:
+    notebook_links = "".join(
+        f'<a class="top-nav-link {"is-active" if active == notebook.spec.slug else ""}" '
+        f'href="{notebook_default_url(notebook)}">{html.escape(nav_label(notebook))}</a>'
+        for notebook in notebooks
+    )
+    return f"""
+      <nav class="top-nav" aria-label="Primary">
+        <a class="top-nav-link {"is-active" if active == "home" else ""}" href="/">Home</a>
+        {notebook_links}
+        <a class="top-nav-link {"is-active" if active == CODE_READING_SLUG else ""}" href="/{CODE_READING_SLUG}">Code Reading</a>
+        <a class="top-nav-link {"is-active" if active == "saved" else ""}" href="/saved">Saved</a>
+        <a class="top-nav-link {"is-active" if active == "notes" else ""}" href="/notes">My Notes</a>
+      </nav>
+    """
+
+
+def saved_card_entries(
+    notebooks: Sequence[Notebook],
+    persistent_state: Optional[Dict[str, object]],
+) -> Tuple[List[str], List[str]]:
     card_lookup = {}
     for notebook in notebooks:
-        card_count = len(notebook.cards)
         for card in notebook.cards:
             card_lookup[f"{notebook.spec.slug}:{card.number}"] = (
                 notebook, card)
-        tiles.append(
-            f"""
-            <a class="card-tile" href="{overview_url(notebook)}">
-              <div class="card-meta">
-                <span class="card-number">{card_count}</span>
-                <span>{card_count} cards</span>
-              </div>
-              <h3>{html.escape(notebook.spec.title)}</h3>
-              <p class="card-preview">{html.escape(notebook.spec.description)}</p>
-            </a>
-            """
-        )
 
-    saved_entries = []
-    valid_saved_keys = []
+    saved_entries: List[str] = []
+    valid_saved_keys: List[str] = []
     saved_state_root = (persistent_state or {}).get(
         "saved_cards", []) if persistent_state else []
     if isinstance(saved_state_root, list):
@@ -3335,7 +4933,7 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
                 f"""
                 <article class="card-tile saved-card" data-saved-card data-key="{html.escape(str(key), quote=True)}">
                   <div class="card-meta">
-                    <span class="card-number">01</span>
+                    <span class="card-number">{card.number:02d}</span>
                     <span>{html.escape(notebook.spec.title)}</span>
                   </div>
                   <h3>{html.escape(card.title)}</h3>
@@ -3345,75 +4943,95 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
                   </div>
                   <div class="reveal-actions">
                     <a class="button" href="{card_url(notebook, card)}">Open</a>
-                    <button
-                      class="button-secondary"
-                      type="button"
-                      data-unsave-button
-                      data-key="{html.escape(str(key), quote=True)}"
-                    >
-                      Remove
-                    </button>
+                    <button class="button-secondary" type="button" data-unsave-button data-key="{html.escape(str(key), quote=True)}">Remove</button>
                   </div>
                 </article>
                 """
             )
+    return saved_entries, valid_saved_keys
 
-    note_entries = []
-    note_state_root = (persistent_state or {}).get(
-        "notes", {}) if persistent_state else {}
-    if isinstance(note_state_root, dict):
-        notebook_map = {notebook.spec.slug: notebook for notebook in notebooks}
-        for notebook_slug, cards in note_state_root.items():
-            notebook = notebook_map.get(notebook_slug)
-            if notebook is None or not isinstance(cards, dict):
+
+def home_note_entries(persistent_state: Optional[Dict[str, object]]) -> List[str]:
+    entries = []
+    home_note_state_root = (persistent_state or {}).get(
+        "home_notes", {}) if persistent_state else {}
+    if isinstance(home_note_state_root, dict):
+        for note_id, note_state in home_note_state_root.items():
+            if not isinstance(note_state, dict):
                 continue
-            for card_id, note_state in cards.items():
-                if not isinstance(note_state, dict):
-                    continue
-                text = note_state.get("text", "")
-                attachments = note_state.get("attachments", [])
-                updated_at = note_state.get("updatedAt", "")
-                if not isinstance(text, str):
-                    text = ""
-                if not isinstance(attachments, list):
-                    attachments = []
-                if not text.strip() and not attachments:
-                    continue
-                try:
-                    card_number = int(card_id)
-                except (TypeError, ValueError):
-                    continue
-                card = notebook.by_number.get(card_number)
-                if card is None:
-                    continue
-                preview = first_paragraph(text) if text.strip(
-                ) else f"{len(attachments)} attachment(s)"
-                note_entries.append(
-                    {
-                        "updatedAt": updated_at if isinstance(updated_at, str) else "",
-                        "html": f"""
-                          <article class="card-tile note-card">
-                            <div class="card-meta">
-                              <span class="card-number">01</span>
-                              <span>{html.escape(notebook.spec.title)}</span>
-                            </div>
-                            <h3>{html.escape(card.title)}</h3>
-                            <p class="card-preview">{html.escape(preview)}</p>
-                            <div class="tag-row">
-                              <span class="tag">note</span>
-                              <span class="tag">{len(attachments)} attachments</span>
-                            </div>
-                            <div class="reveal-actions">
-                              <a class="button" href="{card_url(notebook, card)}">Open note</a>
-                            </div>
-                          </article>
-                        """,
-                    }
-                )
+            title = note_state.get("title", "")
+            text = note_state.get("text", "")
+            attachments = note_state.get("attachments", [])
+            created_at = note_state.get("createdAt", "")
+            updated_at = note_state.get("updatedAt", "")
+            note_type = note_state.get("type", "text")
+            if not isinstance(note_type, str) or note_type not in {"text", "cpp"}:
+                note_type = "text"
+            if not isinstance(title, str):
+                title = ""
+            if not isinstance(text, str):
+                text = ""
+            if not isinstance(attachments, list):
+                attachments = []
+            if not title.strip() and not text.strip() and not attachments:
+                continue
+            preview = first_paragraph(text) if text.strip(
+            ) else f"{len(attachments)} attachment(s)"
+            is_code = note_type == "cpp"
+            secondary_tag = '<span class="tag">cpp17</span>' if is_code else f'<span class="tag">{len(attachments)} attachments</span>'
+            run_button = (
+                f'<button class="button" type="button" data-home-note-run data-note-id="{html.escape(str(note_id), quote=True)}">RUN C++</button>'
+                if is_code
+                else ""
+            )
+            entries.append(
+                {
+                    "updatedAt": updated_at if isinstance(updated_at, str) else "",
+                    "createdAt": created_at if isinstance(created_at, str) else "",
+                    "html": f"""
+                      <article class="card-tile note-card home-note-card" data-home-note-card data-note-id="{html.escape(str(note_id), quote=True)}">
+                        <div class="card-meta">
+                          <span class="card-number">N</span>
+                          <span data-home-note-time>{html.escape((updated_at or created_at)[:19].replace("T", " ") if isinstance(updated_at or created_at, str) else "")}</span>
+                        </div>
+                        <h3>{html.escape(title.strip() or "Untitled note")}</h3>
+                        <p class="card-preview">{html.escape(preview)}</p>
+                        <div class="tag-row">
+                          <span class="tag">{"C++ code" if is_code else "text note"}</span>
+                          {secondary_tag}
+                        </div>
+                        <div class="reveal-actions">
+                          <button class="button" type="button" data-home-note-edit data-note-id="{html.escape(str(note_id), quote=True)}">Edit</button>
+                          {run_button}
+                          <button class="button-secondary" type="button" data-home-note-delete data-note-id="{html.escape(str(note_id), quote=True)}">Delete</button>
+                        </div>
+                      </article>
+                    """,
+                }
+            )
+    entries.sort(
+        key=lambda entry: entry.get("updatedAt", "") or entry.get("createdAt", ""),
+        reverse=True,
+    )
+    return [entry["html"] for entry in entries]
 
-    note_entries.sort(key=lambda entry: entry.get(
-        "updatedAt", ""), reverse=True)
-    note_tiles = [entry["html"] for entry in note_entries[:12]]
+
+def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[str, object]] = None) -> str:
+    tiles = []
+    for notebook in notebooks:
+        card_count = len(notebook.cards)
+        tiles.append(
+            f"""
+            <a class="card-tile" href="{overview_url(notebook)}">
+              <div class="card-meta">
+                <span class="card-number">{card_count}</span>
+                <span>{card_count} cards</span>
+              </div>
+              <h3>{html.escape(notebook.spec.title)}</h3>
+              <p class="card-preview">{html.escape(notebook.spec.description)}</p>
+            </a>
+            """
+        )
 
     body = f"""
     <div class="app-shell" data-home-root data-notebook-root data-total-cards="{sum(len(n.cards) for n in notebooks)}">
@@ -3428,59 +5046,497 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
           <div class="stat-label">notebooks</div>
         </div>
       </section>
-      <section class="home-saved-shell">
-        <div class="home-collection-head">
-          <div class="card-meta">
-            <span class="muted">Saved cards</span>
-            <span class="muted"><strong data-saved-count>{len(saved_entries)}</strong> saved</span>
-          </div>
-          <div class="home-collection-actions">
-            <button class="button-secondary" type="button" data-home-toggle="saved" data-home-collapsed>
-              展开
-            </button>
-          </div>
-        </div>
-        <div class="home-collection-body" data-home-body="saved" hidden>
-          <p class="saved-empty" data-saved-empty {'hidden' if saved_entries else ''}>
-            你还没有保存任何题目。点开题目页里的 SAVE 就会出现在这里。
-          </p>
-          <div class="overview-grid saved-grid" data-saved-root>{''.join(saved_entries)}</div>
-        </div>
-      </section>
-      <section class="home-saved-shell">
-        <div class="home-collection-head">
-          <div class="card-meta">
-            <span class="muted">My Notes</span>
-            <span class="muted">{len(note_tiles)} recent</span>
-          </div>
-          <div class="home-collection-actions">
-            <button class="button-secondary" type="button" data-home-toggle="notes" data-home-collapsed>展开</button>
-          </div>
-        </div>
-        <div class="home-collection-body" data-home-body="notes" hidden>
-          <p class="saved-empty" {'hidden' if note_tiles else ''}>你的 note 还为空。打开题目页里的 note 区，输入文字或粘贴截图后会出现在这里。</p>
-          <div class="overview-grid saved-grid">{''.join(note_tiles)}</div>
-        </div>
-      </section>
+      {render_top_nav(notebooks, "home")}
       <section class="overview-grid">
         {''.join(tiles)}
       </section>
     </div>
     """
-    home_state = persistent_state
+
+    return render_page("C++ 学习笔记卡片站", body, boot_data=boot_payload(notebooks, persistent_state))
+
+
+def render_notes_page(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[str, object]] = None) -> str:
+    note_tiles = home_note_entries(persistent_state)
+    body = f"""
+    <div class="app-shell" data-notes-root>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Personal notes</p>
+          <h1>My Notes</h1>
+          <p class="lede">记录临时想法、复习日志、截图和代码片段。最新更新会排在最前面。</p>
+        </div>
+        <div class="hero-card">
+          <div class="stat"><strong data-home-note-count>{len(note_tiles)}</strong></div>
+          <div class="stat-label">notes</div>
+        </div>
+      </section>
+      {render_top_nav(notebooks, "notes")}
+      <section class="home-note-shell">
+        <div class="home-collection-head">
+          <div class="card-meta">
+            <span class="muted">My Notes</span>
+            <span class="muted"><strong data-home-note-count>{len(note_tiles)}</strong> notes</span>
+          </div>
+          <div class="home-collection-actions">
+            <button class="button" type="button" data-home-note-new>New note</button>
+          </div>
+        </div>
+        <div class="home-note-composer" data-home-note-composer>
+          <input class="home-note-title" type="text" data-home-note-title placeholder="Title">
+          <div class="note-type-row" role="radiogroup" aria-label="Note type">
+            <label class="note-type-option">
+              <input type="radio" name="home-note-type" value="text" data-home-note-type checked>
+              <span>Text</span>
+            </label>
+            <label class="note-type-option">
+              <input type="radio" name="home-note-type" value="cpp" data-home-note-type>
+              <span>C++ Code</span>
+            </label>
+          </div>
+          <textarea
+            class="note-editor home-note-editor"
+            data-home-note-text
+            placeholder="Write a note. Paste text or screenshots with Ctrl+V. Markdown code blocks like ```cpp are displayed in preview."
+          ></textarea>
+          <div class="reveal-actions note-actions">
+            <button class="button" type="button" data-home-note-save>Save note</button>
+            <button class="button-secondary" type="button" data-home-note-clear>Clear editor</button>
+            <button class="button-secondary" type="button" data-home-note-delete-current hidden>Delete note</button>
+            <span class="note-status" data-home-note-status>Draft</span>
+          </div>
+          <section class="note-preview-shell" data-home-note-preview-shell>
+            <div class="note-section-head">Preview</div>
+            <div class="note-preview" data-home-note-preview></div>
+          </section>
+          <section class="note-attachments-shell" data-home-note-attachments-shell>
+            <div class="note-section-head">Attachments</div>
+            <div class="note-attachments" data-home-note-attachments></div>
+          </section>
+        </div>
+        <p class="saved-empty" data-home-note-empty {'hidden' if note_tiles else ''}>还没有 note。点击 New note，写标题和正文后保存。</p>
+        <div class="overview-grid saved-grid" data-home-note-list>{''.join(note_tiles)}</div>
+      </section>
+      <div class="playground-backdrop" data-note-runner-backdrop hidden></div>
+      <aside class="playground-drawer" data-note-runner-root aria-label="My Notes C++ runner" aria-hidden="true">
+        <div class="playground-shell">
+          <div class="playground-head">
+            <div>
+              <div class="playground-title">My Notes C++ Runner</div>
+              <div class="playground-subtitle">Compiles locally with `g++ -std=c++17`.</div>
+            </div>
+            <button class="button-secondary" type="button" data-note-runner-close>Close</button>
+          </div>
+          <div class="playground-toolbar">
+            <button class="button-secondary" type="button" data-note-runner-save>Save back to note</button>
+            <button class="button" type="button" data-note-runner-run>RUN</button>
+          </div>
+          <div class="playground-runner-layout">
+            <div class="playground-runner-code">
+              <label class="playground-label" for="note-runner-source">Code</label>
+              <textarea
+                id="note-runner-source"
+                class="playground-editor"
+                data-note-runner-source
+                spellcheck="false"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+              ></textarea>
+            </div>
+            <div class="playground-runner-side">
+              <label class="playground-label" for="note-runner-stdin">stdin</label>
+              <textarea
+                id="note-runner-stdin"
+                class="playground-stdin"
+                data-note-runner-stdin
+                spellcheck="false"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+                placeholder="Optional standard input"
+              ></textarea>
+              <div class="playground-output-grid">
+                <section class="playground-section">
+                  <div class="playground-section-head">Compile output</div>
+                  <pre class="playground-output" data-note-runner-compile-output>Waiting for code...</pre>
+                </section>
+                <section class="playground-section">
+                  <div class="playground-section-head">Runtime output</div>
+                  <pre class="playground-output" data-note-runner-runtime-output>RUN to see output.</pre>
+                </section>
+              </div>
+            </div>
+          </div>
+          <div class="playground-status" data-note-runner-status>Closed</div>
+        </div>
+      </aside>
+    </div>
+    """
+    return render_page("My Notes", body, boot_data=boot_payload(notebooks, persistent_state))
+
+
+def render_saved_page(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[str, object]] = None) -> str:
+    saved_entries, valid_saved_keys = saved_card_entries(
+        notebooks, persistent_state)
+    saved_state = persistent_state
     if isinstance(persistent_state, dict):
-        home_state = dict(persistent_state)
-        home_state["saved_cards"] = valid_saved_keys
+        saved_state = dict(persistent_state)
+        saved_state["saved_cards"] = valid_saved_keys
+    body = f"""
+    <div class="app-shell" data-saved-page-root>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Saved cards</p>
+          <h1>Saved</h1>
+          <p class="lede">集中查看已经收藏的题目，适合面试前快速复盘。</p>
+        </div>
+        <div class="hero-card">
+          <div class="stat"><strong data-saved-count>{len(saved_entries)}</strong></div>
+          <div class="stat-label">saved</div>
+        </div>
+      </section>
+      {render_top_nav(notebooks, "saved")}
+      <p class="saved-empty" data-saved-empty {'hidden' if saved_entries else ''}>你还没有保存任何题目。点开题目页里的 SAVE 就会出现在这里。</p>
+      <section class="overview-grid saved-grid" data-saved-root>
+        {''.join(saved_entries)}
+      </section>
+    </div>
+    """
+    return render_page("Saved Cards", body, boot_data=boot_payload(notebooks, saved_state))
 
-    return render_page("C++ 学习笔记卡片站", body, boot_data=boot_payload(notebooks, home_state))
+
+def is_code_project_file(path: Path) -> bool:
+    return path.name in CODE_PROJECT_FILE_NAMES or path.suffix.lower() in CODE_PROJECT_EXTENSIONS
 
 
-def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, object]] = None) -> str:
+def code_file_language(path: str) -> str:
+    if path.endswith("CMakeLists.txt"):
+        return "cmake"
+    suffix = Path(path).suffix.lower()
+    if suffix in {".h", ".hpp", ".hh", ".hxx"}:
+        return "cpp"
+    if suffix in {".cpp", ".cc", ".cxx"}:
+        return "cpp"
+    return "text"
+
+
+def is_excluded_code_path(path: Path, project_root: Path) -> bool:
+    try:
+        relative = path.relative_to(project_root)
+    except ValueError:
+        return True
+    return any(part in CODE_PROJECT_EXCLUDED_DIRS for part in relative.parts[:-1])
+
+
+def path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def discover_code_project_roots(base: Path = CODE_PROJECT_ROOT) -> List[Path]:
+    if not base.exists():
+        return []
+
+    roots: List[Path] = []
+    for cmake_file in sorted(base.rglob("CMakeLists.txt")):
+        if any(part in CODE_PROJECT_EXCLUDED_DIRS for part in cmake_file.relative_to(base).parts[:-1]):
+            continue
+        project_root = cmake_file.parent
+        if any(project_root == root or path_is_relative_to(project_root, root) for root in roots):
+            continue
+        roots.append(project_root)
+    return roots
+
+
+def load_code_project(root: Path, number: int) -> CodeProject:
+    files: List[CodeFile] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or not is_code_project_file(path):
+            continue
+        if is_excluded_code_path(path, root):
+            continue
+        relative_path = path.relative_to(root).as_posix()
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        files.append(
+            CodeFile(
+                relative_path=relative_path,
+                language=code_file_language(relative_path),
+                content=content,
+            )
+        )
+    slug = safe_slug_path_component(root.relative_to(CODE_PROJECT_ROOT).as_posix())
+    return CodeProject(
+        number=number,
+        slug=slug,
+        title=root.name,
+        root_path=root,
+        files=tuple(files),
+    )
+
+
+def code_projects() -> Tuple[CodeProject, ...]:
+    return tuple(
+        load_code_project(root, index + 1)
+        for index, root in enumerate(discover_code_project_roots())
+    )
+
+
+def code_project_url(project: CodeProject) -> str:
+    return f"/{CODE_READING_SLUG}/{project.slug}"
+
+
+def code_project_by_slug(projects: Sequence[CodeProject], slug: str) -> CodeProject:
+    for project in projects:
+        if project.slug == slug:
+            return project
+    raise KeyError(slug)
+
+
+CPP_KEYWORDS = {
+    "alignas", "alignof", "asm", "auto", "break", "case", "catch", "class",
+    "concept", "const", "consteval", "constexpr", "constinit", "continue",
+    "co_await", "co_return", "co_yield", "decltype", "default", "delete", "do",
+    "else", "enum", "explicit", "export", "extern", "final", "for", "friend",
+    "goto", "if", "inline", "mutable", "namespace", "new", "noexcept",
+    "operator", "override", "private", "protected", "public", "requires",
+    "return", "sizeof", "static", "static_assert", "struct", "switch",
+    "template", "this", "thread_local", "throw", "try", "typedef", "typeid",
+    "typename", "union", "using", "virtual", "volatile", "while",
+}
+
+CPP_TYPES = {
+    "bool", "char", "char8_t", "char16_t", "char32_t", "double", "float",
+    "int", "long", "short", "signed", "unsigned", "void", "wchar_t",
+    "size_t", "std", "string", "vector", "queue", "deque", "map", "set",
+    "unordered_map", "unordered_set", "unique_ptr", "shared_ptr", "weak_ptr",
+    "mutex", "lock_guard", "unique_lock", "condition_variable", "thread",
+    "atomic", "future", "optional", "variant", "function",
+}
+
+CMAKE_KEYWORDS = {
+    "add_executable", "add_library", "add_subdirectory", "add_test",
+    "cmake_minimum_required", "enable_testing", "find_package", "include",
+    "message", "project", "set", "target_compile_features",
+    "target_compile_options", "target_include_directories",
+    "target_link_libraries",
+}
+
+
+def code_span(css_class: str, value: str) -> str:
+    return f'<span class="{css_class}">{html.escape(value)}</span>'
+
+
+def highlight_cpp_code(source: str) -> str:
+    token_re = re.compile(
+        r"""
+        (?P<comment>//[^\n]*|/\*.*?\*/)
+        |(?P<string>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')
+        |(?P<preprocessor>^[ \t]*\#[^\n]*)
+        |(?P<number>\b(?:0x[0-9A-Fa-f]+|\d+(?:\.\d+)?)(?:[uUlLfF]+)?\b)
+        |(?P<identifier>\b[A-Za-z_][A-Za-z0-9_]*\b)
+        """,
+        re.M | re.S | re.X,
+    )
+    output: List[str] = []
+    last = 0
+    for match in token_re.finditer(source):
+        output.append(html.escape(source[last:match.start()]))
+        value = match.group(0)
+        kind = match.lastgroup or ""
+        if kind == "identifier":
+            next_text = source[match.end():match.end() + 32]
+            prev_text = source[max(0, match.start() - 4):match.start()]
+            if value in CPP_KEYWORDS:
+                output.append(code_span("code-token-keyword", value))
+            elif value in CPP_TYPES or value[:1].isupper():
+                output.append(code_span("code-token-type", value))
+            elif next_text.lstrip().startswith("("):
+                output.append(code_span("code-token-function", value))
+            elif prev_text.endswith("::"):
+                output.append(code_span("code-token-member", value))
+            else:
+                output.append(code_span("code-token-member", value))
+        elif kind == "comment":
+            output.append(code_span("code-token-comment", value))
+        elif kind == "string":
+            output.append(code_span("code-token-string", value))
+        elif kind == "preprocessor":
+            output.append(code_span("code-token-preprocessor", value))
+        elif kind == "number":
+            output.append(code_span("code-token-number", value))
+        else:
+            output.append(html.escape(value))
+        last = match.end()
+    output.append(html.escape(source[last:]))
+    return "".join(output)
+
+
+def highlight_cmake_code(source: str) -> str:
+    token_re = re.compile(
+        r'(?P<comment>#[^\n]*)|(?P<string>"(?:\\.|[^"\\])*")|(?P<variable>\$\{[^}]+\})|(?P<identifier>\b[A-Za-z_][A-Za-z0-9_]*\b)',
+        re.M,
+    )
+    output: List[str] = []
+    last = 0
+    for match in token_re.finditer(source):
+        output.append(html.escape(source[last:match.start()]))
+        value = match.group(0)
+        kind = match.lastgroup or ""
+        lower_value = value.lower()
+        if kind == "comment":
+            output.append(code_span("code-token-comment", value))
+        elif kind == "string":
+            output.append(code_span("code-token-string", value))
+        elif kind == "variable":
+            output.append(code_span("code-token-member", value))
+        elif kind == "identifier" and lower_value in CMAKE_KEYWORDS:
+            output.append(code_span("code-token-function", value))
+        elif kind == "identifier" and value.isupper():
+            output.append(code_span("code-token-type", value))
+        else:
+            output.append(html.escape(value))
+        last = match.end()
+    output.append(html.escape(source[last:]))
+    return "".join(output)
+
+
+def highlight_code(source: str, language: str) -> str:
+    if language == "cpp":
+        return highlight_cpp_code(source)
+    if language == "cmake":
+        return highlight_cmake_code(source)
+    return html.escape(source)
+
+
+def render_code_reading_overview(notebooks: Sequence[Notebook], projects: Sequence[CodeProject]) -> str:
     cards = []
+    for project in projects:
+        file_count = len(project.files)
+        preview = ", ".join(file.relative_path for file in project.files[:4])
+        if len(project.files) > 4:
+            preview += ", ..."
+        cards.append(
+            f"""
+            <a class="card-tile code-project-card" href="{code_project_url(project)}">
+              <div class="card-meta">
+                <span class="card-number">{project.number:02d}</span>
+                <span>{file_count} files</span>
+              </div>
+              <h3>{html.escape(project.title)}</h3>
+              <p class="card-preview">{html.escape(preview or 'No C++ files found')}</p>
+              <div class="tag-row">
+                <span class="tag">project</span>
+                <span class="tag">code reading</span>
+              </div>
+            </a>
+            """
+        )
+
+    body = f"""
+    <div class="app-shell" data-code-reading-root>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Code reading</p>
+          <h1>代码阅读记录</h1>
+          <p class="lede">按项目整理 `cpp_awssome_project` 下的 C++ / CMake 文件，进入项目后可以从左侧文件树快速跳转。</p>
+        </div>
+        <div class="hero-card">
+          <div class="stat">{len(projects)}</div>
+          <div class="stat-label">projects</div>
+        </div>
+      </section>
+      {render_top_nav(notebooks, CODE_READING_SLUG)}
+      <section class="code-project-grid">
+        {''.join(cards)}
+      </section>
+    </div>
+    """
+    return render_page("代码阅读记录", body, boot_data=boot_payload(notebooks))
+
+
+def render_code_project_page(
+    notebooks: Sequence[Notebook],
+    projects: Sequence[CodeProject],
+    project: CodeProject,
+) -> str:
+    toc = "".join(
+        f"""
+        <a href="#file-{index}">
+          {html.escape(file.relative_path)}
+        </a>
+        """
+        for index, file in enumerate(project.files, 1)
+    )
+    files = "".join(
+        f"""
+        <article class="panel code-file-card" id="file-{index}">
+          <div class="code-file-head">
+            <h2 class="code-file-title">{html.escape(file.relative_path)}</h2>
+            <span class="tag">{html.escape(file.language)}</span>
+          </div>
+          <pre class="code-reading-pre"><code class="language-{html.escape(file.language, quote=True)}">{highlight_code(file.content, file.language)}</code></pre>
+        </article>
+        """
+        for index, file in enumerate(project.files, 1)
+    )
+    project_index_links = "".join(
+        f'<a class="top-nav-link {"is-active" if item.slug == project.slug else ""}" href="{code_project_url(item)}">{html.escape(item.title)}</a>'
+        for item in projects
+    )
+    body = f"""
+    <div class="app-shell" data-code-project-root>
+      <div class="breadcrumb">
+        <a href="/">Home</a>
+        <span> / </span>
+        <a href="/{CODE_READING_SLUG}">代码阅读记录</a>
+        <span> / </span>
+        <span>{html.escape(project.title)}</span>
+      </div>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Project code</p>
+          <h1>{html.escape(project.title)}</h1>
+          <p class="lede">{html.escape(project.root_path.relative_to(ROOT).as_posix())}</p>
+        </div>
+        <div class="hero-card">
+          <div class="stat">{len(project.files)}</div>
+          <div class="stat-label">files</div>
+        </div>
+      </section>
+      {render_top_nav(notebooks, CODE_READING_SLUG)}
+      <nav class="top-nav" aria-label="Code projects">
+        <a class="top-nav-link" href="/{CODE_READING_SLUG}">All projects</a>
+        {project_index_links}
+      </nav>
+      <div class="code-file-layout">
+        <aside class="code-file-sidebar" aria-label="Project files">
+          <div class="reader-sidebar-title">文件结构</div>
+          <nav class="code-file-tree">{toc}</nav>
+        </aside>
+        <main class="code-file-list">
+          {files if files else '<p class="saved-empty">No C++ or CMake files found.</p>'}
+        </main>
+      </div>
+    </div>
+    """
+    return render_page(f"代码阅读记录 - {project.title}", body, boot_data=boot_payload(notebooks))
+
+
+def render_question_cells(notebook: Notebook) -> str:
+    cells = []
     for card in notebook.cards:
         search_text = " ".join(
             [card.title, card.preview, " ".join(card.labels)])
-        cards.append(
+        cells.append(
             f"""
             <a
               class="question-cell is-new"
@@ -3495,30 +5551,161 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
             </a>
             """
         )
+    return "".join(cells)
 
+
+def render_jump_sidebar(notebook: Notebook, title: str = "Quick jump") -> str:
+    return f"""
+      <aside class="jump-sidebar" aria-label="{html.escape(title, quote=True)}">
+        <div class="jump-sidebar-title">{html.escape(title)}</div>
+        <div class="card-meta" style="margin-bottom: 10px;">
+          <span class="muted"><span data-progress-label>0 visited</span></span>
+          <span class="muted"><span data-today-label>0 today</span></span>
+        </div>
+        <div
+          class="question-grid"
+          data-overview-root
+          data-notebook-slug="{html.escape(notebook.spec.slug, quote=True)}"
+        >
+          {render_question_cells(notebook)}
+        </div>
+      </aside>
+    """
+
+
+def render_card_sections(card: Card) -> str:
+    return "".join(
+        f"""
+        <section class="answer-section{' is-english' if section.title.lower() == 'english explanation' else ''}">
+          <div class="section-head">
+            <h2>{html.escape(section.title)}</h2>
+            {
+              '<span class="tag">For English interviews</span>'
+              if section.title.lower() == 'english explanation'
+              else ''
+            }
+          </div>
+          <div class="section-body">
+            {section.html}
+          </div>
+        </section>
+        """
+        for section in card.sections
+    )
+
+
+def render_reader_page(notebook: Notebook, persistent_state: Optional[Dict[str, object]] = None) -> str:
+    toc = "".join(
+        f"""
+        <a href="#topic-{card.number}">
+          <span class="reader-toc-number">{card.number:02d}</span>
+          <span class="reader-toc-title">{html.escape(card.title)}</span>
+        </a>
+        """
+        for card in notebook.cards
+    )
+    articles = "".join(
+        f"""
+        <article class="panel flashcard reader-article" id="topic-{card.number}">
+          <div class="question-block">
+            <div class="question-number">{card.number:02d}</div>
+            <h1>{html.escape(card.title)}</h1>
+            <div class="answer-summary">{section_badges(card.labels)}</div>
+          </div>
+          <div class="answer-wrap">
+            {render_card_sections(card)}
+          </div>
+        </article>
+        """
+        for card in notebook.cards
+    )
+    body = f"""
+    <div class="app-shell" data-reader-root>
+      <div class="breadcrumb">
+        <a href="/">Home</a>
+        <span> / </span>
+        <span>{html.escape(notebook.spec.title)}</span>
+      </div>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Reading mode</p>
+          <h1>{html.escape(notebook.spec.title)}</h1>
+          <p class="lede">{html.escape(notebook.spec.description)}</p>
+          <div class="reader-actions">
+            <a class="button" href="{flashcards_url(notebook)}">Flash cards</a>
+            <a class="button-secondary" href="{random_url(notebook)}">随机抽题</a>
+          </div>
+        </div>
+        <div class="hero-card">
+          <div class="stat">{len(notebook.cards)}</div>
+          <div class="stat-label">topics</div>
+        </div>
+      </section>
+      {render_top_nav((notebook,), notebook.spec.slug)}
+      <div class="reader-layout">
+        <aside class="reader-sidebar" aria-label="Table of contents">
+          <div class="reader-sidebar-title">目录</div>
+          <nav class="reader-toc">{toc}</nav>
+        </aside>
+        <main class="reader-content">{articles}</main>
+      </div>
+    </div>
+    """
+    return render_page(notebook.spec.title, body, boot_data=boot_payload([notebook], persistent_state))
+
+
+def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, object]] = None) -> str:
     tiles = []
+    full_cards = notebook.spec.slug in NOTE_READER_SLUGS
     for card in notebook.cards:
         search_text = " ".join(
             [card.title, card.preview, " ".join(card.labels)])
-        tiles.append(
-            f"""
-            <a
-              class="card-tile"
-              data-card-tile
-              data-search-text="{html.escape(search_text, quote=True)}"
-              href="{card_url(notebook, card)}"
-            >
-              <div class="card-meta">
-                <span class="card-number">{card.number:02d}</span>
-                <span>{len(card.sections)} sections</span>
-              </div>
-              <h3>{html.escape(card.title)}</h3>
-              <p class="card-preview">{html.escape(card.preview)}</p>
-              <div class="tag-row">{section_badges(card.labels)}</div>
-            </a>
-            """
-        )
+        if full_cards:
+            tiles.append(
+                f"""
+                <article
+                  class="card-tile card-tile-full"
+                  data-card-tile
+                  data-search-text="{html.escape(search_text, quote=True)}"
+                >
+                  <div class="card-meta">
+                    <span class="card-number">{card.number:02d}</span>
+                    <span>{len(card.sections)} sections</span>
+                  </div>
+                  <h3>{html.escape(card.title)}</h3>
+                  <div class="overview-card-body">{render_card_sections(card)}</div>
+                  <div class="tag-row">{section_badges(card.labels)}</div>
+                  <div class="reveal-actions">
+                    <a class="button-secondary" href="{card_url(notebook, card)}">Open card</a>
+                  </div>
+                </article>
+                """
+            )
+        else:
+            tiles.append(
+                f"""
+                <a
+                  class="card-tile"
+                  data-card-tile
+                  data-search-text="{html.escape(search_text, quote=True)}"
+                  href="{card_url(notebook, card)}"
+                >
+                  <div class="card-meta">
+                    <span class="card-number">{card.number:02d}</span>
+                    <span>{len(card.sections)} sections</span>
+                  </div>
+                  <h3>{html.escape(card.title)}</h3>
+                  <p class="card-preview">{html.escape(card.preview)}</p>
+                  <div class="tag-row">{section_badges(card.labels)}</div>
+                </a>
+                """
+            )
 
+    reader_link = (
+        f'<a class="button-secondary" href="{overview_url(notebook)}">阅读模式</a>'
+        if notebook.spec.slug in NOTE_READER_SLUGS
+        else ""
+    )
     body = f"""
     <div class="app-shell" data-notebook-root data-total-cards="{len(notebook.cards)}">
       <div class="breadcrumb">
@@ -3559,26 +5746,16 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
 
       <div class="toolbar">
         <a class="button-secondary" href="{random_url(notebook)}">随机抽题</a>
+        {reader_link}
         <span class="muted">当前显示 <strong data-visible-count>{len(notebook.cards)}</strong> 张卡片。</span>
       </div>
 
-      <section class="panel flashcard" aria-label="Quick jump grid">
-        <div class="card-meta">
-          <span class="muted">Quick jump grid</span>
-          <span class="muted"><span data-progress-label>0 visited</span> · <span data-today-label>0 today</span></span>
-        </div>
-        <div
-          class="question-grid"
-          data-overview-root
-          data-notebook-slug="{html.escape(notebook.spec.slug, quote=True)}"
-        >
-          {''.join(cards)}
-        </div>
-      </section>
-
-      <section class="overview-grid" style="margin-top: 18px;">
-        {''.join(tiles)}
-      </section>
+      <div class="overview-with-jump">
+        {render_jump_sidebar(notebook, "题号导航")}
+        <section class="overview-grid overview-grid-main">
+          {''.join(tiles)}
+        </section>
+      </div>
 
       <p class="page-footer">答案默认不在总览页展开，点进题目后再显示，减少“看答案”的摩擦。</p>
     </div>
@@ -3594,24 +5771,9 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
     playground_data = playground_payload(card)
     playground_data_json = html.escape(json.dumps(
         playground_data, ensure_ascii=False), quote=True)
-    answer_sections = "".join(
-        f"""
-        <section class="answer-section{' is-english' if section.title.lower() == 'english explanation' else ''}">
-          <div class="section-head">
-            <h2>{html.escape(section.title)}</h2>
-            {
-              '<span class="tag">For English interviews</span>'
-              if section.title.lower() == 'english explanation'
-              else ''
-            }
-          </div>
-          <div class="section-body">
-            {section.html}
-          </div>
-        </section>
-        """
-        for section in card.sections
-    )
+    answer_sections = render_card_sections(card)
+    show_answer_by_default = notebook.spec.slug in NOTE_READER_SLUGS
+    answer_hidden_attr = "" if show_answer_by_default else " hidden"
     body = f"""
     <div class="app-shell" data-notebook-root data-total-cards="{len(notebook.cards)}">
       <div class="breadcrumb">
@@ -3634,7 +5796,9 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
         </div>
       </section>
 
-      <div class="card-workspace">
+      <div class="card-with-jump">
+        {render_jump_sidebar(notebook, "题号导航")}
+        <div class="card-workspace">
         <article
           class="panel flashcard card-main"
           data-card-root
@@ -3652,6 +5816,11 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
               <button class="button-secondary" type="button" data-playground-open>RUN C++</button>
               <button class="button-secondary" type="button" data-note-toggle>My Note</button>
               <a class="button-secondary" href="{overview_url(notebook)}">返回总览</a>
+              {
+                '<a class="button-secondary" href="' + flashcards_url(notebook) + '">卡片总览</a>'
+                if notebook.spec.slug in NOTE_READER_SLUGS
+                else ''
+              }
               <a
                 class="button-secondary"
                 href="{random_url(notebook)}"
@@ -3663,7 +5832,7 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
             </div>
           </div>
 
-          <div class="answer-wrap" data-answer-wrap hidden>
+          <div class="answer-wrap" data-answer-wrap{answer_hidden_attr}>
             {answer_sections}
           </div>
 
@@ -3754,43 +5923,50 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
               <button class="button" type="button" data-playground-run>RUN</button>
             </div>
 
-            <label class="playground-label" for="playground-source">Code</label>
-            <textarea
-              id="playground-source"
-              class="playground-editor"
-              data-playground-source
-              spellcheck="false"
-              autocomplete="off"
-              autocapitalize="off"
-              autocorrect="off"
-            ></textarea>
+            <div class="playground-runner-layout">
+              <div class="playground-runner-code">
+                <label class="playground-label" for="playground-source">Code</label>
+                <textarea
+                  id="playground-source"
+                  class="playground-editor"
+                  data-playground-source
+                  spellcheck="false"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  autocorrect="off"
+                ></textarea>
+              </div>
 
-            <label class="playground-label" for="playground-stdin">stdin</label>
-            <textarea
-              id="playground-stdin"
-              class="playground-stdin"
-              data-playground-stdin
-              spellcheck="false"
-              autocomplete="off"
-              autocapitalize="off"
-              autocorrect="off"
-              placeholder="Optional standard input"
-            ></textarea>
+              <div class="playground-runner-side">
+                <label class="playground-label" for="playground-stdin">stdin</label>
+                <textarea
+                  id="playground-stdin"
+                  class="playground-stdin"
+                  data-playground-stdin
+                  spellcheck="false"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  placeholder="Optional standard input"
+                ></textarea>
 
-            <div class="playground-output-grid">
-              <section class="playground-section">
-                <div class="playground-section-head">Compile output</div>
-                <pre class="playground-output" data-playground-compile-output>Waiting for code...</pre>
-              </section>
-              <section class="playground-section">
-                <div class="playground-section-head">Runtime output</div>
-                <pre class="playground-output" data-playground-runtime-output>RUN to see output.</pre>
-              </section>
+                <div class="playground-output-grid">
+                  <section class="playground-section">
+                    <div class="playground-section-head">Compile output</div>
+                    <pre class="playground-output" data-playground-compile-output>Waiting for code...</pre>
+                  </section>
+                  <section class="playground-section">
+                    <div class="playground-section-head">Runtime output</div>
+                    <pre class="playground-output" data-playground-runtime-output>RUN to see output.</pre>
+                  </section>
+                </div>
+              </div>
             </div>
 
             <div class="playground-status" data-playground-status>Closed</div>
           </div>
         </aside>
+        </div>
       </div>
     </div>
     """
@@ -3825,6 +6001,21 @@ class FlashcardServer(BaseHTTPRequestHandler):
         if route == "/":
             self.send_html(render_home(
                 self.notebooks, self.state_store.snapshot()), send_body=send_body)
+            return
+
+        if route == "/notes":
+            self.send_html(render_notes_page(
+                self.notebooks, self.state_store.snapshot()), send_body=send_body)
+            return
+
+        if route == "/saved":
+            self.send_html(render_saved_page(
+                self.notebooks, self.state_store.snapshot()), send_body=send_body)
+            return
+
+        if route == f"/{CODE_READING_SLUG}":
+            self.send_html(render_code_reading_overview(
+                self.notebooks, code_projects()), send_body=send_body)
             return
 
         if route == "/_api/state":
@@ -3874,6 +6065,24 @@ class FlashcardServer(BaseHTTPRequestHandler):
             self.send_not_found(send_body=send_body)
             return
 
+        if parts[0] == CODE_READING_SLUG:
+            projects = code_projects()
+            if len(parts) == 1:
+                self.send_html(render_code_reading_overview(
+                    self.notebooks, projects), send_body=send_body)
+                return
+            if len(parts) == 2:
+                try:
+                    project = code_project_by_slug(projects, parts[1])
+                except KeyError:
+                    self.send_not_found(send_body=send_body)
+                    return
+                self.send_html(render_code_project_page(
+                    self.notebooks, projects, project), send_body=send_body)
+                return
+            self.send_not_found(send_body=send_body)
+            return
+
         slug = parts[0]
         try:
             notebook = notebook_by_slug(self.notebooks, slug)
@@ -3882,6 +6091,15 @@ class FlashcardServer(BaseHTTPRequestHandler):
             return
 
         if len(parts) == 1:
+            if notebook.spec.slug in NOTE_READER_SLUGS:
+                self.send_html(render_reader_page(
+                    notebook, self.state_store.snapshot()), send_body=send_body)
+                return
+            self.send_html(render_overview(
+                notebook, self.state_store.snapshot()), send_body=send_body)
+            return
+
+        if len(parts) == 2 and parts[1] == "cards":
             self.send_html(render_overview(
                 notebook, self.state_store.snapshot()), send_body=send_body)
             return
@@ -4004,6 +6222,35 @@ class FlashcardServer(BaseHTTPRequestHandler):
                 notebook_slug, card_id, note_state)
             self.send_json({"ok": True, "notebookSlug": notebook_slug,
                            "cardId": card_id}, send_body=send_body)
+            return
+
+        if kind == "home_note":
+            note_id = payload.get("noteId", "")
+            note_state = payload.get("noteState", {})
+            if not isinstance(note_id, str) or not note_id:
+                self.send_json(
+                    {"ok": False, "error": "noteId must be a string."}, status=400, send_body=send_body)
+                return
+            if not isinstance(note_state, dict):
+                self.send_json(
+                    {"ok": False, "error": "noteState must be an object."}, status=400, send_body=send_body)
+                return
+            self.state_store.save_home_note_state(note_id, note_state)
+            self.send_json(
+                {"ok": True, "noteId": note_id}, send_body=send_body)
+            return
+
+        if kind == "home_note_delete":
+            note_id = payload.get("noteId", "")
+            if not isinstance(note_id, str) or not note_id:
+                self.send_json(
+                    {"ok": False, "error": "noteId must be a string."}, status=400, send_body=send_body)
+                return
+            self.state_store.delete_home_note_state(note_id)
+            delete_note_attachment_tree(
+                self.state_store.state_dir, "home-notes", note_id)
+            self.send_json({"ok": True, "noteId": note_id},
+                           send_body=send_body)
             return
 
         self.send_json({"ok": False, "error": "Unsupported state update kind."},

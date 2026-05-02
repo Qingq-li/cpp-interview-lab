@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 data/
+
+cpp_awssome_project/example
+build
+cpp_awssome_project/test-sensor-logger-project/lambda_demo
