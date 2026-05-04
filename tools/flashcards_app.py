@@ -183,6 +183,7 @@ CPP_LAB_EXTENSIONS = {
     ".txt",
     ".md",
 }
+CPP_LAB_SOURCE_EXTENSIONS = {".cpp", ".cc", ".cxx"}
 CODE_PROJECT_EXCLUDED_DIRS = {
     ".git",
     "__pycache__",
@@ -222,6 +223,20 @@ RUN_TIMEOUT_SECONDS = 3
 MAX_CAPTURED_OUTPUT_CHARS = 20_000
 MAX_NOTE_TEXT_CHARS = 100_000
 MAX_NOTE_ATTACHMENT_BYTES = 8 * 1024 * 1024
+RESOURCE_TIME_BIN = shutil.which("time") or "/usr/bin/time"
+RESOURCE_TIME_FORMAT = "\n".join(
+    [
+        "wall_seconds=%e",
+        "user_seconds=%U",
+        "sys_seconds=%S",
+        "cpu_percent=%P",
+        "max_rss_kb=%M",
+        "minor_page_faults=%R",
+        "major_page_faults=%F",
+        "voluntary_context_switches=%w",
+        "involuntary_context_switches=%c",
+    ]
+)
 DEFAULT_STATE_DIR = Path(os.environ.get("FLASHCARDS_STATE_DIR", ROOT / "data"))
 STATE_FILE_NAME = "flashcards-state.json"
 PWA_THEME_COLOR = "#0f766e"
@@ -2697,6 +2712,45 @@ function deleteHomeNoteState(noteId) {
   syncPersistentState('home_note_delete', { noteId });
 }
 
+function formatMetricSeconds(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(3)} s` : 'n/a';
+}
+
+function formatMetricInteger(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : 'n/a';
+}
+
+function formatMetricMemory(kb) {
+  if (typeof kb !== 'number' || !Number.isFinite(kb)) {
+    return 'n/a';
+  }
+  if (kb >= 1024 * 1024) {
+    return `${(kb / 1024 / 1024).toFixed(2)} GB`;
+  }
+  if (kb >= 1024) {
+    return `${(kb / 1024).toFixed(2)} MB`;
+  }
+  return `${kb} KB`;
+}
+
+function formatResourceMetrics(title, metrics) {
+  if (!metrics || !metrics.available) {
+    return `${title}: resource metrics unavailable`;
+  }
+  const cpu = typeof metrics.cpu_percent === 'number' && Number.isFinite(metrics.cpu_percent)
+    ? `${metrics.cpu_percent.toFixed(1)}%`
+    : 'n/a';
+  return [
+    `${title}:`,
+    `  elapsed wall time : ${formatMetricSeconds(metrics.wall_seconds)}`,
+    `  CPU time          : user ${formatMetricSeconds(metrics.user_seconds)} + sys ${formatMetricSeconds(metrics.sys_seconds)}`,
+    `  CPU utilization   : ${cpu}`,
+    `  peak memory RSS   : ${formatMetricMemory(metrics.max_rss_kb)}`,
+    `  page faults       : minor ${formatMetricInteger(metrics.minor_page_faults)}, major ${formatMetricInteger(metrics.major_page_faults)}`,
+    `  context switches  : voluntary ${formatMetricInteger(metrics.voluntary_context_switches)}, involuntary ${formatMetricInteger(metrics.involuntary_context_switches)}`,
+  ].join('\\n');
+}
+
 function compileResultParts(result) {
   const compileParts = [];
   if (result && result.compile_stdout) {
@@ -2710,6 +2764,9 @@ function compileResultParts(result) {
   }
   if (result && !compileParts.length && result.phase === 'compile') {
     compileParts.push('Compilation finished without diagnostics.');
+  }
+  if (result && result.compile_metrics) {
+    compileParts.push('', '[compile resource usage]', formatResourceMetrics('Compile', result.compile_metrics));
   }
 
   const runtimeParts = [];
@@ -2725,6 +2782,9 @@ function compileResultParts(result) {
     runtimeParts.push('Program was not executed.');
   } else if (result && !runtimeParts.length && result.ok) {
     runtimeParts.push('Program finished without output.');
+  }
+  if (result && result.run_metrics && result.phase === 'run') {
+    runtimeParts.push('', '[run resource usage]', formatResourceMetrics('Run', result.run_metrics));
   }
 
   let status = 'Waiting for code...';
@@ -3520,7 +3580,7 @@ function bindCppLab() {
       if (parts.runtime) {
         lines.push(parts.runtime);
       }
-      if (result.compile_stderr || result.compile_stdout) {
+      if (result.compile_stderr || result.compile_stdout || result.compile_metrics) {
         lines.push('', '[compile diagnostics]', parts.compile);
       }
     }
@@ -3848,7 +3908,7 @@ function bindCppLab() {
       const response = await fetch('/_api/cpp-lab/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files }),
+        body: JSON.stringify({ files, runnable_path: activePath || '' }),
       });
       const result = await response.json();
       if (!response.ok && result.error) {
@@ -4109,7 +4169,7 @@ function bindCppLab() {
       if (parts.runtime) {
         lines.push(parts.runtime);
       }
-      if (result.compile_stderr || result.compile_stdout) {
+      if (result.compile_stderr || result.compile_stdout || result.compile_metrics) {
         lines.push('', '[compile diagnostics]', parts.compile);
       }
     }
@@ -4140,7 +4200,7 @@ function bindCppLab() {
       const response = await fetch('/_api/cpp-lab/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files }),
+        body: JSON.stringify({ files, runnable_path: activePath || '' }),
       });
       const result = await response.json();
       if (!response.ok && result.error) {
@@ -5988,6 +6048,102 @@ def truncate_text(text: str, limit: int = MAX_CAPTURED_OUTPUT_CHARS) -> str:
     return text[:limit] + "\n[output truncated]"
 
 
+def empty_resource_metrics() -> Dict[str, object]:
+    return {
+        "available": False,
+        "wall_seconds": None,
+        "user_seconds": None,
+        "sys_seconds": None,
+        "cpu_percent": None,
+        "max_rss_kb": None,
+        "minor_page_faults": None,
+        "major_page_faults": None,
+        "voluntary_context_switches": None,
+        "involuntary_context_switches": None,
+    }
+
+
+def parse_resource_time_metrics(metrics_path: Path) -> Dict[str, object]:
+    metrics = empty_resource_metrics()
+    try:
+        raw_metrics = metrics_path.read_text(encoding="utf-8")
+    except OSError:
+        return metrics
+
+    for line in raw_metrics.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator:
+            continue
+        key = key.strip()
+        value = value.strip()
+        if key in {"wall_seconds", "user_seconds", "sys_seconds"}:
+            try:
+                metrics[key] = float(value)
+            except ValueError:
+                metrics[key] = None
+        elif key == "cpu_percent":
+            try:
+                metrics[key] = float(value.rstrip("%"))
+            except ValueError:
+                metrics[key] = None
+        elif key in {
+            "max_rss_kb",
+            "minor_page_faults",
+            "major_page_faults",
+            "voluntary_context_switches",
+            "involuntary_context_switches",
+        }:
+            try:
+                metrics[key] = int(value)
+            except ValueError:
+                metrics[key] = None
+
+    metrics["available"] = any(value is not None for key, value in metrics.items() if key != "available")
+    return metrics
+
+
+def resource_time_command(command: Sequence[str], metrics_path: Path) -> List[str]:
+    if not Path(RESOURCE_TIME_BIN).exists():
+        return list(command)
+    return [
+        RESOURCE_TIME_BIN,
+        "-f",
+        RESOURCE_TIME_FORMAT,
+        "-o",
+        str(metrics_path),
+        *command,
+    ]
+
+
+def run_resource_tracked_command(
+    command: Sequence[str],
+    cwd: str,
+    timeout_seconds: int,
+    metrics_path: Path,
+    stdin_data: Optional[str] = None,
+) -> Tuple[Optional[int], str, str, bool]:
+    proc = subprocess.Popen(
+        resource_time_command(command, metrics_path),
+        cwd=cwd,
+        stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(input=stdin_data, timeout=timeout_seconds)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = proc.communicate()
+    return proc.returncode, stdout or "", stderr or "", timed_out
+
+
 def compile_cpp_submission(source: str, stdin_data: str = "", language: str = CPP_LANGUAGE) -> Dict[str, object]:
     if language != CPP_LANGUAGE:
         return {
@@ -6007,6 +6163,8 @@ def compile_cpp_submission(source: str, stdin_data: str = "", language: str = CP
         tmp_path = Path(tmpdir)
         source_path = tmp_path / "main.cpp"
         executable_path = tmp_path / "main.out"
+        compile_metrics_path = tmp_path / "compile_metrics.txt"
+        run_metrics_path = tmp_path / "run_metrics.txt"
         source_path.write_text(source, encoding="utf-8")
 
         compile_cmd = [
@@ -6017,76 +6175,66 @@ def compile_cpp_submission(source: str, stdin_data: str = "", language: str = CP
             "-Wall",
             "-Wextra",
             "-pedantic",
+            "-pthread",
             str(source_path),
             "-o",
             str(executable_path),
         ]
-        try:
-            compile_proc = subprocess.run(
-                compile_cmd,
-                cwd=tmpdir,
-                capture_output=True,
-                text=True,
-                timeout=COMPILE_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired as exc:
+        compile_returncode, compile_stdout_raw, compile_stderr_raw, compile_timed_out = run_resource_tracked_command(
+            compile_cmd,
+            cwd=tmpdir,
+            timeout_seconds=COMPILE_TIMEOUT_SECONDS,
+            metrics_path=compile_metrics_path,
+        )
+        if compile_timed_out:
             return {
                 "ok": False,
                 "phase": "compile",
                 "compiled": False,
                 "compile_returncode": None,
-                "compile_stdout": truncate_text(exc.stdout or ""),
+                "compile_stdout": truncate_text(compile_stdout_raw),
                 "compile_stderr": truncate_text(
-                    (exc.stderr or "")
+                    compile_stderr_raw
                     + f"\nCompilation timed out after {COMPILE_TIMEOUT_SECONDS} seconds."
                 ),
+                "compile_metrics": parse_resource_time_metrics(compile_metrics_path),
                 "run_returncode": None,
                 "run_stdout": "",
                 "run_stderr": "",
                 "run_timed_out": False,
+                "run_metrics": empty_resource_metrics(),
             }
 
-        compile_stdout = truncate_text(compile_proc.stdout)
-        compile_stderr = truncate_text(compile_proc.stderr)
+        compile_stdout = truncate_text(compile_stdout_raw)
+        compile_stderr = truncate_text(compile_stderr_raw)
+        compile_metrics = parse_resource_time_metrics(compile_metrics_path)
 
-        if compile_proc.returncode != 0:
+        if compile_returncode != 0:
             return {
                 "ok": False,
                 "phase": "compile",
                 "compiled": False,
-                "compile_returncode": compile_proc.returncode,
+                "compile_returncode": compile_returncode,
                 "compile_stdout": compile_stdout,
                 "compile_stderr": compile_stderr,
+                "compile_metrics": compile_metrics,
                 "run_returncode": None,
                 "run_stdout": "",
                 "run_stderr": "",
                 "run_timed_out": False,
+                "run_metrics": empty_resource_metrics(),
             }
 
-        run_proc = subprocess.Popen(
+        run_returncode, run_stdout_raw, run_stderr_raw, run_timed_out = run_resource_tracked_command(
             [str(executable_path)],
             cwd=tmpdir,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
+            timeout_seconds=RUN_TIMEOUT_SECONDS,
+            metrics_path=run_metrics_path,
+            stdin_data=stdin_data,
         )
-        try:
-            run_stdout, run_stderr = run_proc.communicate(
-                input=stdin_data, timeout=RUN_TIMEOUT_SECONDS)
-            run_timed_out = False
-        except subprocess.TimeoutExpired:
-            run_timed_out = True
-            try:
-                os.killpg(run_proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            run_stdout, run_stderr = run_proc.communicate()
 
-        run_stdout = truncate_text(run_stdout or "")
-        run_stderr = truncate_text(run_stderr or "")
-        run_returncode = run_proc.returncode
+        run_stdout = truncate_text(run_stdout_raw)
+        run_stderr = truncate_text(run_stderr_raw)
         if run_timed_out:
             run_stderr = (run_stderr + "\n" if run_stderr else "") + \
                 f"Execution timed out after {RUN_TIMEOUT_SECONDS} seconds."
@@ -6095,18 +6243,24 @@ def compile_cpp_submission(source: str, stdin_data: str = "", language: str = CP
             "ok": (not run_timed_out) and run_returncode == 0,
             "phase": "run",
             "compiled": True,
-            "compile_returncode": compile_proc.returncode,
+            "compile_returncode": compile_returncode,
             "compile_stdout": compile_stdout,
             "compile_stderr": compile_stderr,
+            "compile_metrics": compile_metrics,
             "run_returncode": run_returncode,
             "run_stdout": run_stdout,
             "run_stderr": run_stderr,
             "run_timed_out": run_timed_out,
+            "run_metrics": parse_resource_time_metrics(run_metrics_path),
         }
 
 
 def is_cpp_lab_file(path: Path) -> bool:
     return path.name in CPP_LAB_FILE_NAMES or path.suffix.lower() in CPP_LAB_EXTENSIONS
+
+
+def is_cpp_lab_source_file(path: Path) -> bool:
+    return path.suffix.lower() in CPP_LAB_SOURCE_EXTENSIONS
 
 
 def cpp_lab_relative_path(path: Path, root: Optional[Path] = None) -> str:
@@ -6194,18 +6348,36 @@ def save_cpp_lab_file(relative_path: str, content: str, root: Optional[Path] = N
     return read_cpp_lab_file(relative_path, root)
 
 
-def compile_cpp_lab_project(stdin_data: str = "", root: Optional[Path] = None) -> Dict[str, object]:
+def compile_cpp_lab_project(
+    stdin_data: str = "",
+    root: Optional[Path] = None,
+    runnable_path: Optional[str] = None,
+) -> Dict[str, object]:
     root = root or CPP_LAB_ROOT
-    source_path = cpp_lab_file_path(CPP_LAB_MAIN_FILE, root)
+    if runnable_path is None:
+        runnable_path = cpp_lab_default_file(cpp_lab_files(root))
+    source_path = cpp_lab_file_path(runnable_path, root)
+    relative_source_path = cpp_lab_relative_path(source_path, root)
+    if not is_cpp_lab_source_file(source_path):
+        return {
+            "ok": False,
+            "phase": "validation",
+            "error": f"Selected file is not runnable C++ source: {relative_source_path}",
+            "runnable_file": relative_source_path,
+        }
     if not source_path.exists():
         return {
             "ok": False,
             "phase": "validation",
-            "error": f"Missing runnable file: {CPP_LAB_MAIN_FILE}",
+            "error": f"Missing runnable file: {relative_source_path}",
+            "runnable_file": relative_source_path,
         }
 
     with tempfile.TemporaryDirectory(prefix="cpp_lab_compile_") as tmpdir:
-        executable_path = Path(tmpdir) / "main.out"
+        tmp_path = Path(tmpdir)
+        executable_path = tmp_path / "main.out"
+        compile_metrics_path = tmp_path / "compile_metrics.txt"
+        run_metrics_path = tmp_path / "run_metrics.txt"
         compile_cmd = [
             "g++",
             "-std=c++17",
@@ -6214,75 +6386,67 @@ def compile_cpp_lab_project(stdin_data: str = "", root: Optional[Path] = None) -
             "-Wall",
             "-Wextra",
             "-pedantic",
+            "-pthread",
             str(source_path),
             "-o",
             str(executable_path),
         ]
-        try:
-            compile_proc = subprocess.run(
-                compile_cmd,
-                cwd=str(root),
-                capture_output=True,
-                text=True,
-                timeout=COMPILE_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired as exc:
+        compile_returncode, compile_stdout_raw, compile_stderr_raw, compile_timed_out = run_resource_tracked_command(
+            compile_cmd,
+            cwd=str(root),
+            timeout_seconds=COMPILE_TIMEOUT_SECONDS,
+            metrics_path=compile_metrics_path,
+        )
+        if compile_timed_out:
             return {
                 "ok": False,
                 "phase": "compile",
                 "compiled": False,
                 "compile_returncode": None,
-                "compile_stdout": truncate_text(exc.stdout or ""),
+                "compile_stdout": truncate_text(compile_stdout_raw),
                 "compile_stderr": truncate_text(
-                    (exc.stderr or "")
+                    compile_stderr_raw
                     + f"\nCompilation timed out after {COMPILE_TIMEOUT_SECONDS} seconds."
                 ),
+                "compile_metrics": parse_resource_time_metrics(compile_metrics_path),
                 "run_returncode": None,
                 "run_stdout": "",
                 "run_stderr": "",
                 "run_timed_out": False,
+                "run_metrics": empty_resource_metrics(),
+                "runnable_file": relative_source_path,
             }
 
-        compile_stdout = truncate_text(compile_proc.stdout)
-        compile_stderr = truncate_text(compile_proc.stderr)
-        if compile_proc.returncode != 0:
+        compile_stdout = truncate_text(compile_stdout_raw)
+        compile_stderr = truncate_text(compile_stderr_raw)
+        compile_metrics = parse_resource_time_metrics(compile_metrics_path)
+        if compile_returncode != 0:
             return {
                 "ok": False,
                 "phase": "compile",
                 "compiled": False,
-                "compile_returncode": compile_proc.returncode,
+                "compile_returncode": compile_returncode,
                 "compile_stdout": compile_stdout,
                 "compile_stderr": compile_stderr,
+                "compile_metrics": compile_metrics,
                 "run_returncode": None,
                 "run_stdout": "",
                 "run_stderr": "",
                 "run_timed_out": False,
+                "run_metrics": empty_resource_metrics(),
+                "runnable_file": relative_source_path,
             }
 
-        run_proc = subprocess.Popen(
+        run_returncode, run_stdout_raw, run_stderr_raw, run_timed_out = run_resource_tracked_command(
             [str(executable_path)],
             cwd=str(root),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
+            timeout_seconds=RUN_TIMEOUT_SECONDS,
+            metrics_path=run_metrics_path,
+            stdin_data=stdin_data,
         )
-        try:
-            run_stdout, run_stderr = run_proc.communicate(
-                input=stdin_data, timeout=RUN_TIMEOUT_SECONDS)
-            run_timed_out = False
-        except subprocess.TimeoutExpired:
-            run_timed_out = True
-            try:
-                os.killpg(run_proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            run_stdout, run_stderr = run_proc.communicate()
 
-        run_stdout = truncate_text(run_stdout or "")
-        run_stderr = truncate_text(run_stderr or "")
-        run_returncode = run_proc.returncode
+        run_stdout = truncate_text(run_stdout_raw)
+        run_stderr = truncate_text(run_stderr_raw)
         if run_timed_out:
             run_stderr = (run_stderr + "\n" if run_stderr else "") + \
                 f"Execution timed out after {RUN_TIMEOUT_SECONDS} seconds."
@@ -6291,13 +6455,16 @@ def compile_cpp_lab_project(stdin_data: str = "", root: Optional[Path] = None) -
             "ok": (not run_timed_out) and run_returncode == 0,
             "phase": "run",
             "compiled": True,
-            "compile_returncode": compile_proc.returncode,
+            "compile_returncode": compile_returncode,
             "compile_stdout": compile_stdout,
             "compile_stderr": compile_stderr,
+            "compile_metrics": compile_metrics,
             "run_returncode": run_returncode,
             "run_stdout": run_stdout,
             "run_stderr": run_stderr,
             "run_timed_out": run_timed_out,
+            "run_metrics": parse_resource_time_metrics(run_metrics_path),
+            "runnable_file": relative_source_path,
         }
 
 
@@ -6605,7 +6772,7 @@ def render_cpp_lab_page(notebooks: Sequence[Notebook]) -> str:
         <div>
           <p class="eyebrow">C++ code lab</p>
           <h1>C++ Lab</h1>
-          <p class="lede">Edit files from `cpp_awssome_project/random_pj` with CodeMirror 6, save changes to disk, and run `random_code.cpp` with g++.</p>
+          <p class="lede">Edit files from `cpp_awssome_project/random_pj` with CodeMirror 6, save changes to disk, and run the selected C++ source with g++.</p>
         </div>
         <div class="hero-card">
           <div class="stat">{len(files)}</div>
@@ -6621,7 +6788,7 @@ def render_cpp_lab_page(notebooks: Sequence[Notebook]) -> str:
           <div class="cpp-lab-actions">
             <span class="cpp-lab-shortcuts">Alt+C run · Ctrl+Enter run · Ctrl+S save · Ctrl+/ comment</span>
             <button class="button-secondary" type="button" data-cpp-lab-save title="Save current file (Ctrl+S)">Save</button>
-            <button class="button" type="button" data-cpp-lab-run data-cpp-lab-run-shortcut accesskey="c" title="Save all dirty files and run random_code.cpp (Alt+C)">Run Alt+C</button>
+            <button class="button" type="button" data-cpp-lab-run data-cpp-lab-run-shortcut accesskey="c" title="Save dirty files and run the selected C++ source (Alt+C)">Run Alt+C</button>
             <button class="button-secondary" type="button" data-cpp-lab-clear>Clear</button>
           </div>
         </div>
@@ -7911,8 +8078,13 @@ class FlashcardServer(BaseHTTPRequestHandler):
 
         files = payload.get("files", [])
         stdin_data = payload.get("stdin", "")
-        if not isinstance(files, list) or not isinstance(stdin_data, str):
-            self.send_json({"ok": False, "error": "files must be a list and stdin must be a string."},
+        runnable_path = payload.get("runnable_path") or None
+        if (
+            not isinstance(files, list)
+            or not isinstance(stdin_data, str)
+            or (runnable_path is not None and not isinstance(runnable_path, str))
+        ):
+            self.send_json({"ok": False, "error": "files must be a list, stdin must be a string, and runnable_path must be a string."},
                            status=400, send_body=send_body)
             return
 
@@ -7927,7 +8099,10 @@ class FlashcardServer(BaseHTTPRequestHandler):
                     raise ValueError("Each file entry needs string path and content.")
                 code_file = save_cpp_lab_file(path, content)
                 saved_files.append(code_file.relative_path)
-            result = compile_cpp_lab_project(stdin_data=stdin_data)
+            result = compile_cpp_lab_project(
+                stdin_data=stdin_data,
+                runnable_path=runnable_path,
+            )
         except (OSError, ValueError) as exc:
             self.send_json({"ok": False, "phase": "validation", "error": str(exc)},
                            status=400, send_body=send_body)

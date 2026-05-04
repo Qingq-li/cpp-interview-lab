@@ -191,7 +191,7 @@ int main() {}
         self.assertIn("data-cpp-lab-clear", html)
         self.assertIn("data-cpp-lab-editor-theme", html)
         self.assertIn("data-cpp-lab-output-theme", html)
-        self.assertIn("random_code.cpp", html)
+        self.assertIn("selected C++ source", html)
 
     def test_saved_page_render_matching_entries(self):
         html = render_saved_page(
@@ -575,9 +575,59 @@ int main() {}
         self.assertTrue(run_payload["ok"])
         self.assertIn("random_code.cpp", run_payload["saved_files"])
         self.assertIn("new output", run_payload["run_stdout"])
+        self.assertTrue(run_payload["compile_metrics"]["available"])
+        self.assertGreaterEqual(run_payload["compile_metrics"]["wall_seconds"], 0)
+        self.assertTrue(run_payload["run_metrics"]["available"])
+        self.assertGreaterEqual(run_payload["run_metrics"]["max_rss_kb"], 0)
         self.assertFalse(fail_payload["ok"])
         self.assertEqual("compile", fail_payload["phase"])
         self.assertTrue(fail_payload["compile_stderr"])
+        self.assertTrue(fail_payload["compile_metrics"]["available"])
+
+    def test_cpp_lab_run_api_compiles_selected_file(self):
+        with TemporaryDirectory() as tmpdir:
+            lab_root = Path(tmpdir) / "random_pj"
+            lab_root.mkdir()
+            (lab_root / "random_classinherited_code.cpp").write_text(
+                '#include <iostream>\nint main() { std::cout << "selected\\n"; }\n',
+                encoding="utf-8",
+            )
+            old_root = flashcards_app.CPP_LAB_ROOT
+            flashcards_app.CPP_LAB_ROOT = lab_root
+            FlashcardServer.notebooks = self.notebooks
+            FlashcardServer.state_store = PersistentStateStore(Path(tmpdir) / "state")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), FlashcardServer)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                host, port = server.server_address
+                run_request = Request(
+                    f"http://{host}:{port}/_api/cpp-lab/run",
+                    data=json.dumps(
+                        {
+                            "runnable_path": "random_classinherited_code.cpp",
+                            "files": [
+                                {
+                                    "path": "random_classinherited_code.cpp",
+                                    "content": '#include <iostream>\nint main() { std::cout << "current file\\n"; }\n',
+                                }
+                            ],
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(run_request, timeout=10) as response:
+                    run_payload = json.loads(response.read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+                flashcards_app.CPP_LAB_ROOT = old_root
+
+        self.assertTrue(run_payload["ok"])
+        self.assertEqual("random_classinherited_code.cpp", run_payload["runnable_file"])
+        self.assertIn("current file", run_payload["run_stdout"])
 
     def test_cpp_compile_success(self):
         result = compile_cpp_submission(
@@ -594,6 +644,10 @@ int main() {
         self.assertEqual("run", result["phase"])
         self.assertTrue(result["compiled"])
         self.assertIn("hello", result["run_stdout"])
+        self.assertTrue(result["compile_metrics"]["available"])
+        self.assertGreaterEqual(result["compile_metrics"]["wall_seconds"], 0)
+        self.assertTrue(result["run_metrics"]["available"])
+        self.assertGreaterEqual(result["run_metrics"]["max_rss_kb"], 0)
 
     def test_cpp_compile_failure(self):
         result = compile_cpp_submission("int main( { return 0; }")
