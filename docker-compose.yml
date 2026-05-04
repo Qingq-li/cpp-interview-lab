@@ -13,3 +13,4 @@ services:
       FLASHCARDS_STATE_DIR: /data
     volumes:
       - ./data:/data
+      - ./cpp_awssome_project/random_pj:/app/cpp_awssome_project/random_pj

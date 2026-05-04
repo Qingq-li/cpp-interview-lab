@@ -1,10 +1,13 @@
+import json
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
+import tools.flashcards_app as flashcards_app
 from tools.flashcards_app import (
     build_notebooks,
     build_pwa_icon_png,
@@ -21,6 +24,7 @@ from tools.flashcards_app import (
     render_card_page,
     render_code_project_page,
     render_code_reading_overview,
+    render_cpp_lab_page,
     render_home,
     render_markdown,
     render_notes_page,
@@ -167,8 +171,27 @@ int main() {}
         self.assertIn('href="/notes"', html)
         self.assertIn('href="/saved"', html)
         self.assertIn('href="/beginner"', html)
+        self.assertIn('href="/cpp-lab"', html)
+        self.assertIn("C++ Lab", html)
         self.assertNotIn("data-home-note-composer", html)
         self.assertNotIn("data-saved-root", html)
+
+    def test_cpp_lab_page_contains_editor_output_controls(self):
+        html = render_cpp_lab_page(self.notebooks)
+        self.assertIn("data-cpp-lab-root", html)
+        self.assertIn("data-cpp-lab-file-select", html)
+        self.assertIn("data-cpp-lab-editor-mount", html)
+        self.assertIn("CodeMirror", html)
+        self.assertIn("data-cpp-lab-output", html)
+        self.assertIn("data-cpp-lab-save", html)
+        self.assertIn("data-cpp-lab-run", html)
+        self.assertIn("data-cpp-lab-run-shortcut", html)
+        self.assertIn("Alt+C", html)
+        self.assertIn("Ctrl+/ comment", html)
+        self.assertIn("data-cpp-lab-clear", html)
+        self.assertIn("data-cpp-lab-editor-theme", html)
+        self.assertIn("data-cpp-lab-output-theme", html)
+        self.assertIn("random_code.cpp", html)
 
     def test_saved_page_render_matching_entries(self):
         html = render_saved_page(
@@ -421,6 +444,140 @@ int main() {}
 
         self.assertIn("data-notes-root", notes_html)
         self.assertIn("data-saved-page-root", saved_html)
+
+    def test_cpp_lab_routes_and_apis(self):
+        with TemporaryDirectory() as tmpdir:
+            lab_root = Path(tmpdir) / "random_pj"
+            lab_root.mkdir()
+            main_file = lab_root / "random_code.cpp"
+            main_file.write_text(
+                '#include <iostream>\nint main() { std::cout << "api ok\\n"; }\n',
+                encoding="utf-8",
+            )
+            old_root = flashcards_app.CPP_LAB_ROOT
+            flashcards_app.CPP_LAB_ROOT = lab_root
+            FlashcardServer.notebooks = self.notebooks
+            FlashcardServer.state_store = PersistentStateStore(Path(tmpdir) / "state")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), FlashcardServer)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                host, port = server.server_address
+                base_url = f"http://{host}:{port}"
+                with urlopen(f"{base_url}/cpp-lab", timeout=5) as response:
+                    lab_html = response.read().decode("utf-8")
+                with urlopen(f"{base_url}/_api/cpp-lab/files", timeout=5) as response:
+                    files_payload = json.loads(response.read().decode("utf-8"))
+                with urlopen(f"{base_url}/_api/cpp-lab/file?path=random_code.cpp", timeout=5) as response:
+                    file_payload = json.loads(response.read().decode("utf-8"))
+
+                save_request = Request(
+                    f"{base_url}/_api/cpp-lab/file",
+                    data=json.dumps(
+                        {
+                            "path": "random_code.cpp",
+                            "content": '#include <iostream>\nint main() { std::cout << "saved\\n"; }\n',
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(save_request, timeout=5) as response:
+                    save_payload = json.loads(response.read().decode("utf-8"))
+
+                bad_request = Request(
+                    f"{base_url}/_api/cpp-lab/file",
+                    data=json.dumps(
+                        {"path": "../README.md", "content": "bad"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as bad_error:
+                    urlopen(bad_request, timeout=5)
+                bad_payload = json.loads(bad_error.exception.read().decode("utf-8"))
+                saved_content = main_file.read_text(encoding="utf-8")
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+                flashcards_app.CPP_LAB_ROOT = old_root
+
+        self.assertIn("data-cpp-lab-root", lab_html)
+        self.assertTrue(files_payload["ok"])
+        self.assertEqual("random_code.cpp", files_payload["defaultFile"])
+        self.assertIn("random_code.cpp", [entry["path"] for entry in files_payload["files"]])
+        self.assertTrue(file_payload["ok"])
+        self.assertIn("code-token-preprocessor", file_payload["highlighted"])
+        self.assertTrue(save_payload["ok"])
+        self.assertIn("saved", saved_content)
+        self.assertFalse(bad_payload["ok"])
+        self.assertIn("inside", bad_payload["error"])
+
+    def test_cpp_lab_run_api_saves_then_compiles(self):
+        with TemporaryDirectory() as tmpdir:
+            lab_root = Path(tmpdir) / "random_pj"
+            lab_root.mkdir()
+            (lab_root / "random_code.cpp").write_text(
+                '#include <iostream>\nint main() { std::cout << "old\\n"; }\n',
+                encoding="utf-8",
+            )
+            old_root = flashcards_app.CPP_LAB_ROOT
+            flashcards_app.CPP_LAB_ROOT = lab_root
+            FlashcardServer.notebooks = self.notebooks
+            FlashcardServer.state_store = PersistentStateStore(Path(tmpdir) / "state")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), FlashcardServer)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                host, port = server.server_address
+                base_url = f"http://{host}:{port}"
+                run_request = Request(
+                    f"{base_url}/_api/cpp-lab/run",
+                    data=json.dumps(
+                        {
+                            "files": [
+                                {
+                                    "path": "random_code.cpp",
+                                    "content": '#include <iostream>\nint main() { std::cout << "new output\\n"; }\n',
+                                }
+                            ]
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(run_request, timeout=10) as response:
+                    run_payload = json.loads(response.read().decode("utf-8"))
+
+                fail_request = Request(
+                    f"{base_url}/_api/cpp-lab/run",
+                    data=json.dumps(
+                        {
+                            "files": [
+                                {
+                                    "path": "random_code.cpp",
+                                    "content": "int main( { return 0; }",
+                                }
+                            ]
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(fail_request, timeout=10) as response:
+                    fail_payload = json.loads(response.read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+                flashcards_app.CPP_LAB_ROOT = old_root
+
+        self.assertTrue(run_payload["ok"])
+        self.assertIn("random_code.cpp", run_payload["saved_files"])
+        self.assertIn("new output", run_payload["run_stdout"])
+        self.assertFalse(fail_payload["ok"])
+        self.assertEqual("compile", fail_payload["phase"])
+        self.assertTrue(fail_payload["compile_stderr"])
 
     def test_cpp_compile_success(self):
         result = compile_cpp_submission(

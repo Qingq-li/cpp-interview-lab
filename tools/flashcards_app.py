@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 import tempfile
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -165,9 +165,24 @@ NOTEBOOKS: Tuple[NotebookSpec, ...] = (
 
 NOTE_READER_SLUGS = {"cpp-awesome-cheatsheet", "cpp-awesome-notes"}
 CODE_READING_SLUG = "code-reading"
+CPP_LAB_SLUG = "cpp-lab"
 CODE_PROJECT_ROOT = ROOT / "cpp_awssome_project"
+CPP_LAB_ROOT = CODE_PROJECT_ROOT / "random_pj"
+CPP_LAB_MAIN_FILE = "random_code.cpp"
 CODE_PROJECT_FILE_NAMES = {"CMakeLists.txt"}
 CODE_PROJECT_EXTENSIONS = {".cpp", ".cc", ".cxx", ".hpp", ".hh", ".h", ".hxx"}
+CPP_LAB_FILE_NAMES = {"CMakeLists.txt"}
+CPP_LAB_EXTENSIONS = {
+    ".cpp",
+    ".cc",
+    ".cxx",
+    ".h",
+    ".hpp",
+    ".hh",
+    ".hxx",
+    ".txt",
+    ".md",
+}
 CODE_PROJECT_EXCLUDED_DIRS = {
     ".git",
     "__pycache__",
@@ -1164,6 +1179,236 @@ a:hover {
   color: #4ec9b0;
 }
 
+.cpp-lab-shell {
+  display: grid;
+  gap: 14px;
+}
+
+.app-shell[data-cpp-lab-root] {
+  max-width: none;
+  width: 100%;
+  padding: 12px clamp(10px, 1.5vw, 24px) 18px;
+}
+
+.app-shell[data-cpp-lab-root] .hero {
+  margin: 8px 0 12px;
+}
+
+.app-shell[data-cpp-lab-root] .hero h1 {
+  font-size: clamp(1.7rem, 2vw, 2.4rem);
+}
+
+.app-shell[data-cpp-lab-root] .lede {
+  margin-top: 8px;
+}
+
+.app-shell[data-cpp-lab-root] .top-nav {
+  margin: 10px 0 12px;
+}
+
+.cpp-lab-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 250, 243, 0.68);
+}
+
+.cpp-lab-file-select {
+  min-height: 40px;
+  min-width: min(100%, 320px);
+  border: 1px solid rgba(81, 67, 57, 0.16);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fffdf8;
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.cpp-lab-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.cpp-lab-shortcuts {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cpp-lab-status {
+  min-height: 20px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.cpp-lab-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+  min-height: calc(100vh - 210px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: visible;
+  background: #fffdf8;
+  align-items: start;
+}
+
+.cpp-lab-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #f8fafc;
+}
+
+.cpp-lab-pane + .cpp-lab-pane {
+  border-left: 1px solid var(--line);
+}
+
+.cpp-lab-pane[data-cpp-lab-editor-pane] {
+  min-height: calc(100vh - 210px);
+}
+
+.cpp-lab-pane[data-cpp-lab-output-pane] {
+  position: sticky;
+  top: 12px;
+  height: calc(100vh - 24px);
+  max-height: calc(100vh - 24px);
+}
+
+.cpp-lab-pane.is-dark {
+  background: #111827;
+  color: #e5e7eb;
+}
+
+.cpp-lab-pane-head {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 48px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(81, 67, 57, 0.12);
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.cpp-lab-pane.is-dark .cpp-lab-pane-head {
+  border-bottom-color: rgba(229, 231, 235, 0.16);
+  background: rgba(15, 23, 42, 0.86);
+}
+
+.cpp-lab-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.cpp-lab-pane.is-dark .cpp-lab-title {
+  color: #cbd5e1;
+}
+
+.cpp-lab-editor-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cpp-lab-editor-mount {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  background: #dbeafe;
+  color: #111827;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.cpp-lab-editor-mount .cm-editor {
+  height: 100%;
+  min-height: 100%;
+  background: #dbeafe;
+  color: #111827;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.cpp-lab-editor-mount .cm-scroller {
+  font-family: var(--font-mono);
+  line-height: 1.6;
+}
+
+.cpp-lab-pane.is-dark .cpp-lab-editor-mount,
+.cpp-lab-pane.is-dark .cpp-lab-editor-mount .cm-editor {
+  background: #1e1e1e;
+  color: #d4d4d4;
+}
+
+.cpp-lab-editor-error {
+  padding: 16px;
+  color: #b91c1c;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.cpp-lab-pane.is-dark .cpp-lab-editor-error {
+  color: #fca5a5;
+}
+
+.cpp-lab-output {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f8fafc;
+  color: #111827;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.cpp-lab-pane.is-dark .cpp-lab-output {
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
+.cpp-lab-output.is-error {
+  color: #b91c1c;
+}
+
+.cpp-lab-pane.is-dark .cpp-lab-output.is-error {
+  color: #fca5a5;
+}
+
+.cpp-lab-bracket-match {
+  border-radius: 4px;
+  background: rgba(250, 204, 21, 0.38);
+  box-shadow: 0 0 0 1px rgba(180, 83, 9, 0.55) inset;
+  color: inherit;
+}
+
+.cpp-lab-pane.is-dark .cpp-lab-bracket-match {
+  background: rgba(250, 204, 21, 0.26);
+  box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.72) inset;
+}
+
 .reader-article {
   scroll-margin-top: 18px;
 }
@@ -2091,8 +2336,28 @@ a:hover {
   .overview-with-jump,
   .card-with-jump,
   .reader-layout,
-  .code-file-layout {
+  .code-file-layout,
+  .cpp-lab-layout {
     grid-template-columns: 1fr;
+  }
+
+  .cpp-lab-layout {
+    min-height: 0;
+  }
+
+  .cpp-lab-pane {
+    min-height: 52vh;
+  }
+
+  .cpp-lab-pane[data-cpp-lab-output-pane] {
+    position: static;
+    height: 42vh;
+    max-height: 42vh;
+  }
+
+  .cpp-lab-pane + .cpp-lab-pane {
+    border-left: 0;
+    border-top: 1px solid var(--line);
   }
 
   .jump-sidebar,
@@ -2940,6 +3205,1116 @@ function bindPlaygroundPanel() {
   setOpen(state.open);
   syncEditors();
   setOutput(state.lastResult);
+}
+
+const CPP_LAB_KEYWORDS = new Set([
+  'alignas', 'alignof', 'asm', 'auto', 'break', 'case', 'catch', 'class', 'concept',
+  'const', 'consteval', 'constexpr', 'constinit', 'continue', 'co_await', 'co_return',
+  'co_yield', 'decltype', 'default', 'delete', 'do', 'else', 'enum', 'explicit',
+  'export', 'extern', 'final', 'for', 'friend', 'goto', 'if', 'inline', 'mutable',
+  'namespace', 'new', 'noexcept', 'operator', 'override', 'private', 'protected',
+  'public', 'requires', 'return', 'sizeof', 'static', 'static_assert', 'struct',
+  'switch', 'template', 'this', 'thread_local', 'throw', 'try', 'typedef', 'typename',
+  'using', 'virtual', 'volatile', 'while',
+]);
+
+const CPP_LAB_TYPES = new Set([
+  'bool', 'char', 'char8_t', 'char16_t', 'char32_t', 'double', 'float', 'int', 'long',
+  'short', 'signed', 'unsigned', 'void', 'wchar_t', 'size_t', 'std', 'string', 'vector',
+  'queue', 'mutex', 'thread', 'atomic', 'unique_ptr', 'shared_ptr', 'weak_ptr',
+]);
+
+function cppLabFindBracketPair(source, index) {
+  const openToClose = { '(': ')', '[': ']', '{': '}', '<': '>' };
+  const closeToOpen = { ')': '(', ']': '[', '}': '{', '>': '<' };
+  let cursor = index;
+  if (!openToClose[source[cursor]] && !closeToOpen[source[cursor]] && cursor > 0) {
+    cursor -= 1;
+  }
+  const char = source[cursor];
+  if (openToClose[char]) {
+    const close = openToClose[char];
+    let depth = 0;
+    for (let i = cursor; i < source.length; i += 1) {
+      if (source[i] === char) {
+        depth += 1;
+      } else if (source[i] === close) {
+        depth -= 1;
+        if (depth === 0) {
+          return { open: cursor, close: i };
+        }
+      }
+    }
+  }
+  if (closeToOpen[char]) {
+    const open = closeToOpen[char];
+    let depth = 0;
+    for (let i = cursor; i >= 0; i -= 1) {
+      if (source[i] === char) {
+        depth += 1;
+      } else if (source[i] === open) {
+        depth -= 1;
+        if (depth === 0) {
+          return { open: i, close: cursor };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function cppLabAppendHighlightedRange(output, source, start, end, tokenClass, bracketPair) {
+  if (start >= end) {
+    return;
+  }
+  if (tokenClass) {
+    output.push(`<span class="${tokenClass}">`);
+  }
+  for (let index = start; index < end; index += 1) {
+    const escaped = escapeHtml(source[index]);
+    if (bracketPair && (index === bracketPair.open || index === bracketPair.close)) {
+      output.push(`<span class="cpp-lab-bracket-match">${escaped}</span>`);
+    } else {
+      output.push(escaped);
+    }
+  }
+  if (tokenClass) {
+    output.push('</span>');
+  }
+}
+
+function cppLabTokenClass(source, match) {
+  const value = match[0];
+  if (value.startsWith('//') || value.startsWith('/*')) {
+    return 'code-token-comment';
+  }
+  if (value.startsWith('"') || value.startsWith("'")) {
+    return 'code-token-string';
+  }
+  if (value.trimStart().startsWith('#')) {
+    return 'code-token-preprocessor';
+  }
+  if (/^\\d/.test(value)) {
+    return 'code-token-number';
+  }
+  if (CPP_LAB_KEYWORDS.has(value)) {
+    return 'code-token-keyword';
+  }
+  if (CPP_LAB_TYPES.has(value)) {
+    return 'code-token-type';
+  }
+  const previous = source.slice(Math.max(0, match.index - 2), match.index);
+  if (previous === '::') {
+    return 'code-token-member';
+  }
+  const after = source.slice(match.index + value.length);
+  if (/^\\s*\\(/.test(after)) {
+    return 'code-token-function';
+  }
+  return '';
+}
+
+function cppLabHighlightSource(source, bracketPair) {
+  const tokenRe = /\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/|"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|^\\s*#[^\\n]*|\\b\\d+(?:\\.\\d+)?\\b|\\b[A-Za-z_]\\w*\\b/gm;
+  const output = [];
+  let cursor = 0;
+  let match = tokenRe.exec(source);
+  while (match) {
+    cppLabAppendHighlightedRange(output, source, cursor, match.index, '', bracketPair);
+    cppLabAppendHighlightedRange(
+      output,
+      source,
+      match.index,
+      match.index + match[0].length,
+      cppLabTokenClass(source, match),
+      bracketPair,
+    );
+    cursor = match.index + match[0].length;
+    match = tokenRe.exec(source);
+  }
+  cppLabAppendHighlightedRange(output, source, cursor, source.length, '', bracketPair);
+  return output.join('');
+}
+
+function bindCppLab() {
+  const root = document.querySelector('[data-cpp-lab-root]');
+  if (!root) {
+    return;
+  }
+
+  const fileSelect = root.querySelector('[data-cpp-lab-file-select]');
+  const editor = root.querySelector('[data-cpp-lab-editor]');
+  const highlight = root.querySelector('[data-cpp-lab-highlight]');
+  const output = root.querySelector('[data-cpp-lab-output]');
+  const status = root.querySelector('[data-cpp-lab-status]');
+  const saveButton = root.querySelector('[data-cpp-lab-save]');
+  const runButton = root.querySelector('[data-cpp-lab-run]');
+  const clearButton = root.querySelector('[data-cpp-lab-clear]');
+  const editorPane = root.querySelector('[data-cpp-lab-editor-pane]');
+  const outputPane = root.querySelector('[data-cpp-lab-output-pane]');
+  const editorThemeButton = root.querySelector('[data-cpp-lab-editor-theme]');
+  const outputThemeButton = root.querySelector('[data-cpp-lab-output-theme]');
+  const dirtyFiles = {};
+  let activePath = fileSelect ? fileSelect.value : '';
+  let loading = false;
+  let bracketPair = null;
+
+  const setStatus = (message) => {
+    if (status) {
+      status.textContent = message;
+    }
+  };
+
+  const setHighlight = (value) => {
+    if (highlight) {
+      highlight.innerHTML = value || cppLabHighlightSource(editor ? editor.value : '', bracketPair);
+    }
+  };
+
+  const refreshHighlight = () => {
+    setHighlight(cppLabHighlightSource(editor ? editor.value : '', bracketPair));
+    syncScroll();
+  };
+
+  const setBracketPairFromIndex = (index) => {
+    bracketPair = cppLabFindBracketPair(editor ? editor.value : '', index);
+    refreshHighlight();
+  };
+
+  const editorCharWidth = () => {
+    if (!editor) {
+      return 8;
+    }
+    const styles = window.getComputedStyle(editor);
+    const probe = document.createElement('span');
+    probe.textContent = 'M';
+    probe.style.position = 'absolute';
+    probe.style.visibility = 'hidden';
+    probe.style.fontFamily = styles.fontFamily;
+    probe.style.fontSize = styles.fontSize;
+    probe.style.fontWeight = styles.fontWeight;
+    document.body.appendChild(probe);
+    const width = probe.getBoundingClientRect().width || 8;
+    probe.remove();
+    return width;
+  };
+
+  const editorIndexFromMouse = (event) => {
+    if (!editor) {
+      return 0;
+    }
+    const styles = window.getComputedStyle(editor);
+    const rect = editor.getBoundingClientRect();
+    const lineHeight = parseFloat(styles.lineHeight) || 22;
+    const paddingLeft = parseFloat(styles.paddingLeft) || 0;
+    const paddingTop = parseFloat(styles.paddingTop) || 0;
+    const x = event.clientX - rect.left - paddingLeft + editor.scrollLeft;
+    const y = event.clientY - rect.top - paddingTop + editor.scrollTop;
+    const line = Math.max(0, Math.floor(y / lineHeight));
+    const column = Math.max(0, Math.floor(x / editorCharWidth()));
+    const source = editor.value || '';
+    const lines = source.split('\\n');
+    let index = 0;
+    for (let i = 0; i < Math.min(line, lines.length); i += 1) {
+      index += lines[i].length + 1;
+    }
+    return Math.min(source.length, index + Math.min(column, (lines[line] || '').length));
+  };
+
+  const syncScroll = () => {
+    if (!editor || !highlight) {
+      return;
+    }
+    highlight.scrollTop = editor.scrollTop;
+    highlight.scrollLeft = editor.scrollLeft;
+  };
+
+  const setTheme = (pane, button, storageKey, dark) => {
+    if (pane) {
+      pane.classList.toggle('is-dark', dark);
+    }
+    if (button) {
+      button.textContent = dark ? 'Light' : 'Dark';
+      button.setAttribute('aria-pressed', dark ? 'true' : 'false');
+    }
+    localStorage.setItem(getStoreKey(storageKey), dark ? 'dark' : 'light');
+  };
+
+  setTheme(
+    editorPane,
+    editorThemeButton,
+    'cpp-lab:editor-theme',
+    localStorage.getItem(getStoreKey('cpp-lab:editor-theme')) === 'dark',
+  );
+  setTheme(
+    outputPane,
+    outputThemeButton,
+    'cpp-lab:output-theme',
+    localStorage.getItem(getStoreKey('cpp-lab:output-theme')) === 'dark',
+  );
+
+  const markDirty = (path, dirty) => {
+    if (!path) {
+      return;
+    }
+    if (dirty) {
+      dirtyFiles[path] = editor ? editor.value : '';
+    } else {
+      delete dirtyFiles[path];
+    }
+    const dirtyCount = Object.keys(dirtyFiles).length;
+    setStatus(dirtyCount ? `${dirtyCount} unsaved file(s).` : 'Saved.');
+  };
+
+  const loadFile = async (path) => {
+    if (!path || !editor) {
+      return;
+    }
+    loading = true;
+    activePath = path;
+    setStatus(`Loading ${path}...`);
+    try {
+      const response = await fetch(`/_api/cpp-lab/file?path=${encodeURIComponent(path)}`);
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || 'Failed to load file.');
+      }
+      editor.value = result.content || '';
+      bracketPair = null;
+      refreshHighlight();
+      markDirty(path, false);
+      setStatus(`Loaded ${path}.`);
+      syncScroll();
+    } catch (error) {
+      setStatus(error && error.message ? error.message : 'Failed to load file.');
+    } finally {
+      loading = false;
+    }
+  };
+
+  const saveFile = async (path, content) => {
+    const response = await fetch('/_api/cpp-lab/file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, content }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || 'Failed to save file.');
+    }
+    if (path === activePath) {
+      refreshHighlight();
+    }
+    markDirty(path, false);
+    return result;
+  };
+
+  const outputResult = (result) => {
+    const parts = compileResultParts(result);
+    const lines = [];
+    if (result.phase === 'compile') {
+      lines.push(parts.compile);
+    } else if (result.phase === 'validation' && result.error) {
+      lines.push(result.error);
+    } else {
+      if (parts.runtime) {
+        lines.push(parts.runtime);
+      }
+      if (result.compile_stderr || result.compile_stdout) {
+        lines.push('', '[compile diagnostics]', parts.compile);
+      }
+    }
+    lines.push('', result.ok ? '=== Code Execution Successful ===' : `=== ${parts.status} ===`);
+    if (output) {
+      output.textContent = lines.join('\\n').trim();
+      output.classList.toggle('is-error', !result.ok);
+    }
+    setStatus(parts.status);
+  };
+
+  if (fileSelect) {
+    fileSelect.addEventListener('change', () => {
+      loadFile(fileSelect.value);
+    });
+  }
+
+  if (editor) {
+    const applyEditorEdit = (start, end, value, nextStart, nextEnd) => {
+      const source = editor.value || '';
+      editor.value = source.slice(0, start) + value + source.slice(end);
+      const cursorStart = nextStart === undefined ? start + value.length : nextStart;
+      const cursorEnd = nextEnd === undefined ? cursorStart : nextEnd;
+      editor.selectionStart = cursorStart;
+      editor.selectionEnd = cursorEnd;
+      bracketPair = cppLabFindBracketPair(editor.value, editor.selectionStart || 0);
+      refreshHighlight();
+      markDirty(activePath, true);
+    };
+
+    const lineStartAt = (source, index) => source.lastIndexOf('\\n', Math.max(0, index - 1)) + 1;
+
+    const lineEndAt = (source, index) => {
+      const nextNewline = source.indexOf('\\n', index);
+      return nextNewline === -1 ? source.length : nextNewline;
+    };
+
+    const leadingIndent = (line) => {
+      const match = String(line || '').match(/^[ \\t]*/);
+      return match ? match[0] : '';
+    };
+
+    const currentLineBounds = () => {
+      const source = editor.value || '';
+      const start = editor.selectionStart || 0;
+      return {
+        source,
+        start: lineStartAt(source, start),
+        end: lineEndAt(source, start),
+      };
+    };
+
+    const selectedLineBounds = () => {
+      const source = editor.value || '';
+      const start = editor.selectionStart || 0;
+      const end = editor.selectionEnd || 0;
+      const lineStart = lineStartAt(source, start);
+      const adjustedEnd = end > start && source[end - 1] === '\\n' ? end - 1 : end;
+      return {
+        source,
+        start,
+        end,
+        lineStart,
+        lineEnd: lineEndAt(source, adjustedEnd),
+      };
+    };
+
+    const indentSelection = () => {
+      const start = editor.selectionStart || 0;
+      const end = editor.selectionEnd || 0;
+      const source = editor.value || '';
+      if (start === end) {
+        applyEditorEdit(start, end, '  ');
+        return;
+      }
+      const lineStart = lineStartAt(source, start);
+      const selected = source.slice(lineStart, end);
+      const indented = selected.replace(/^/gm, '  ');
+      applyEditorEdit(lineStart, end, indented, start + 2, end + (indented.length - selected.length));
+    };
+
+    const unindentSelection = () => {
+      const start = editor.selectionStart || 0;
+      const end = editor.selectionEnd || 0;
+      const source = editor.value || '';
+      const lineStart = lineStartAt(source, start);
+      const selected = source.slice(lineStart, end);
+      let removedBeforeStart = 0;
+      let removedTotal = 0;
+      const unindented = selected.replace(/^( {1,2}|\t)/gm, (match, indent, offset) => {
+        const removed = indent.length;
+        removedTotal += removed;
+        if (lineStart + offset < start) {
+          removedBeforeStart += removed;
+        }
+        return '';
+      });
+      const nextStart = Math.max(lineStart, start - removedBeforeStart);
+      const nextEnd = Math.max(nextStart, end - removedTotal);
+      applyEditorEdit(lineStart, end, unindented, nextStart, nextEnd);
+    };
+
+    const smartEnter = () => {
+      const start = editor.selectionStart || 0;
+      const end = editor.selectionEnd || 0;
+      const source = editor.value || '';
+      const lineStart = lineStartAt(source, start);
+      const beforeCursor = source.slice(lineStart, start);
+      let indent = leadingIndent(beforeCursor);
+      if (/[{([:]\\s*$/.test(beforeCursor)) {
+        indent += '  ';
+      }
+      const insert = `\\n${indent}`;
+      const nextCursor = start + 1 + indent.length;
+      applyEditorEdit(start, end, insert, nextCursor, nextCursor);
+    };
+
+    const nearestBlockIndent = () => {
+      const source = editor.value || '';
+      const cursor = editor.selectionStart || 0;
+      let depth = 0;
+      for (let index = cursor - 1; index >= 0; index -= 1) {
+        const char = source[index];
+        if (char === '}') {
+          depth += 1;
+        } else if (char === '{') {
+          if (depth === 0) {
+            const blockLineStart = lineStartAt(source, index);
+            return leadingIndent(source.slice(blockLineStart, index));
+          }
+          depth -= 1;
+        }
+      }
+      return '';
+    };
+
+    const smartClosingBrace = () => {
+      const start = editor.selectionStart || 0;
+      const end = editor.selectionEnd || 0;
+      const source = editor.value || '';
+      const lineStart = lineStartAt(source, start);
+      const beforeCursor = source.slice(lineStart, start);
+      if (start === end && /^\\s*$/.test(beforeCursor)) {
+        const indent = nearestBlockIndent();
+        applyEditorEdit(lineStart, end, `${indent}}`, indent.length + lineStart + 1, indent.length + lineStart + 1);
+        return;
+      }
+      applyEditorEdit(start, end, '}');
+    };
+
+    const toggleLineComment = () => {
+      const bounds = selectedLineBounds();
+      const selected = bounds.source.slice(bounds.lineStart, bounds.lineEnd);
+      const lines = selected.split('\\n');
+      const nonEmptyLines = lines.filter((line) => line.trim());
+      const shouldUncomment = nonEmptyLines.length > 0 && nonEmptyLines.every((line) => /^\\s*\\/\\//.test(line));
+      const nextLines = lines.map((line) => {
+        if (!line.trim()) {
+          return line;
+        }
+        if (shouldUncomment) {
+          return line.replace(/^(\\s*)\\/\\/?\\s?/, '$1');
+        }
+        return line.replace(/^(\\s*)/, '$1// ');
+      });
+      const replacement = nextLines.join('\\n');
+      const delta = replacement.length - selected.length;
+      applyEditorEdit(bounds.lineStart, bounds.lineEnd, replacement, bounds.start, bounds.end + delta);
+    };
+
+    const smartHome = (event) => {
+      const bounds = currentLineBounds();
+      const line = bounds.source.slice(bounds.start, bounds.end);
+      const firstCodeColumn = (line.match(/^[ \\t]*/) || [''])[0].length;
+      const firstCodeIndex = bounds.start + firstCodeColumn;
+      const current = editor.selectionStart || 0;
+      const target = current === firstCodeIndex ? bounds.start : firstCodeIndex;
+      event.preventDefault();
+      if (event.shiftKey) {
+        editor.selectionEnd = target;
+      } else {
+        editor.selectionStart = target;
+        editor.selectionEnd = target;
+      }
+      setBracketPairFromIndex(target);
+    };
+
+    const PAIRS = {
+      '(': ')',
+      '[': ']',
+      '{': '}',
+      '<': '>',
+      '"': '"',
+      "'": "'",
+    };
+
+    const insertPair = (open) => {
+      const close = PAIRS[open];
+      const start = editor.selectionStart || 0;
+      const end = editor.selectionEnd || 0;
+      const selected = editor.value.slice(start, end);
+      if (start !== end) {
+        applyEditorEdit(start, end, `${open}${selected}${close}`, start + 1, end + 1);
+        return;
+      }
+      applyEditorEdit(start, end, `${open}${close}`, start + 1, start + 1);
+    };
+
+    const deleteEmptyPair = () => {
+      const start = editor.selectionStart || 0;
+      const end = editor.selectionEnd || 0;
+      if (start !== end || start === 0) {
+        return false;
+      }
+      const source = editor.value || '';
+      const previous = source[start - 1];
+      const next = source[start];
+      if (PAIRS[previous] !== next) {
+        return false;
+      }
+      applyEditorEdit(start - 1, start + 1, '', start - 1, start - 1);
+      return true;
+    };
+
+    editor.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === '/') {
+        event.preventDefault();
+        toggleLineComment();
+        return;
+      }
+      if (event.key === 'Home') {
+        smartHome(event);
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        smartEnter();
+        return;
+      }
+      if (event.key === 'Backspace' && deleteEmptyPair()) {
+        event.preventDefault();
+        return;
+      }
+      if (event.key === '}') {
+        event.preventDefault();
+        smartClosingBrace();
+        return;
+      }
+      if (Object.prototype.hasOwnProperty.call(PAIRS, event.key)) {
+        event.preventDefault();
+        insertPair(event.key);
+        return;
+      }
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        if (event.shiftKey) {
+          unindentSelection();
+        } else {
+          indentSelection();
+        }
+      }
+    });
+
+    editor.addEventListener('input', () => {
+      if (loading) {
+        return;
+      }
+      bracketPair = cppLabFindBracketPair(editor.value, editor.selectionStart || 0);
+      refreshHighlight();
+      markDirty(activePath, true);
+    });
+    editor.addEventListener('scroll', syncScroll);
+    editor.addEventListener('keyup', () => setBracketPairFromIndex(editor.selectionStart || 0));
+    editor.addEventListener('click', () => setBracketPairFromIndex(editor.selectionStart || 0));
+    editor.addEventListener('mousemove', (event) => {
+      const index = editorIndexFromMouse(event);
+      const nextPair = cppLabFindBracketPair(editor.value || '', index);
+      if (
+        (!nextPair && bracketPair)
+        || (nextPair && (!bracketPair || nextPair.open !== bracketPair.open || nextPair.close !== bracketPair.close))
+      ) {
+        bracketPair = nextPair;
+        refreshHighlight();
+      }
+    });
+    editor.addEventListener('mouseleave', () => {
+      if (bracketPair) {
+        bracketPair = null;
+        refreshHighlight();
+      }
+    });
+  }
+
+  if (saveButton) {
+    const saveActiveFile = async () => {
+      saveButton.disabled = true;
+      try {
+        await saveFile(activePath, editor ? editor.value : '');
+        setStatus(`Saved ${activePath}.`);
+      } catch (error) {
+        setStatus(error && error.message ? error.message : 'Save failed.');
+      } finally {
+        saveButton.disabled = false;
+      }
+    };
+    saveButton.addEventListener('click', saveActiveFile);
+  }
+
+  const runLab = async () => {
+    if (!runButton || runButton.disabled) {
+      return;
+    }
+    if (activePath && editor) {
+      dirtyFiles[activePath] = editor.value;
+    }
+    runButton.disabled = true;
+    runButton.textContent = 'Running...';
+    setStatus('Saving and compiling...');
+    if (output) {
+      output.textContent = 'Saving files, then compiling...';
+      output.classList.remove('is-error');
+    }
+    try {
+      const files = Object.entries(dirtyFiles).map(([path, content]) => ({ path, content }));
+      const response = await fetch('/_api/cpp-lab/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files }),
+      });
+      const result = await response.json();
+      if (!response.ok && result.error) {
+        throw new Error(result.error);
+      }
+      Object.keys(dirtyFiles).forEach((path) => delete dirtyFiles[path]);
+      outputResult(result);
+      if (activePath) {
+        loadFile(activePath);
+      }
+    } catch (error) {
+      if (output) {
+        output.textContent = error && error.message ? error.message : 'Run failed.';
+        output.classList.add('is-error');
+      }
+      setStatus(error && error.message ? error.message : 'Run failed.');
+    } finally {
+      runButton.disabled = false;
+      runButton.textContent = 'Run Alt+C';
+    }
+  };
+
+  if (runButton) {
+    runButton.addEventListener('click', runLab);
+  }
+
+  document.addEventListener('keydown', (event) => {
+    const key = String(event.key || '').toLowerCase();
+    if (event.altKey && key === 'c') {
+      event.preventDefault();
+      runLab();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      runLab();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && key === 's') {
+      event.preventDefault();
+      if (saveButton) {
+        saveButton.click();
+      }
+    }
+  });
+
+  if (clearButton) {
+    clearButton.addEventListener('click', () => {
+      if (output) {
+        output.textContent = 'Output cleared.';
+        output.classList.remove('is-error');
+      }
+      setStatus('Output cleared.');
+    });
+  }
+
+  if (editorThemeButton) {
+    editorThemeButton.addEventListener('click', () => {
+      setTheme(
+        editorPane,
+        editorThemeButton,
+        'cpp-lab:editor-theme',
+        !(editorPane && editorPane.classList.contains('is-dark')),
+      );
+    });
+  }
+
+  if (outputThemeButton) {
+    outputThemeButton.addEventListener('click', () => {
+      setTheme(
+        outputPane,
+        outputThemeButton,
+        'cpp-lab:output-theme',
+        !(outputPane && outputPane.classList.contains('is-dark')),
+      );
+    });
+  }
+
+  if (activePath) {
+    loadFile(activePath);
+  }
+}
+
+function bindCppLab() {
+  const root = document.querySelector('[data-cpp-lab-root]');
+  if (!root) {
+    return;
+  }
+
+  const fileSelect = root.querySelector('[data-cpp-lab-file-select]');
+  const editorMount = root.querySelector('[data-cpp-lab-editor-mount]');
+  const output = root.querySelector('[data-cpp-lab-output]');
+  const status = root.querySelector('[data-cpp-lab-status]');
+  const saveButton = root.querySelector('[data-cpp-lab-save]');
+  const runButton = root.querySelector('[data-cpp-lab-run]');
+  const clearButton = root.querySelector('[data-cpp-lab-clear]');
+  const editorPane = root.querySelector('[data-cpp-lab-editor-pane]');
+  const outputPane = root.querySelector('[data-cpp-lab-output-pane]');
+  const editorThemeButton = root.querySelector('[data-cpp-lab-editor-theme]');
+  const outputThemeButton = root.querySelector('[data-cpp-lab-output-theme]');
+  const dirtyFiles = {};
+  let activePath = fileSelect ? fileSelect.value : '';
+  let editorView = null;
+  let cm = null;
+  let suppressChange = false;
+
+  const CDN = {
+    codemirror: 'https://esm.sh/codemirror@6.0.1?deps=@codemirror/state@6.5.2,@codemirror/view@6.38.8,@codemirror/language@6.11.3,@codemirror/commands@6.8.1',
+    cpp: 'https://esm.sh/@codemirror/lang-cpp@6.0.3?deps=@codemirror/state@6.5.2,@codemirror/view@6.38.8,@codemirror/language@6.11.3',
+    state: 'https://esm.sh/@codemirror/state@6.5.2',
+    view: 'https://esm.sh/@codemirror/view@6.38.8?deps=@codemirror/state@6.5.2',
+    commands: 'https://esm.sh/@codemirror/commands@6.8.1?deps=@codemirror/state@6.5.2,@codemirror/view@6.38.8,@codemirror/language@6.11.3',
+    oneDark: 'https://esm.sh/@codemirror/theme-one-dark@6.1.3?deps=@codemirror/state@6.5.2,@codemirror/view@6.38.8,@codemirror/language@6.11.3',
+  };
+
+  const setStatus = (message) => {
+    if (status) {
+      status.textContent = message;
+    }
+  };
+
+  const editorValue = () => (editorView ? editorView.state.doc.toString() : '');
+
+  const setEditorValue = (content) => {
+    if (!editorView) {
+      return;
+    }
+    suppressChange = true;
+    editorView.dispatch({
+      changes: { from: 0, to: editorView.state.doc.length, insert: content || '' },
+      selection: { anchor: 0 },
+    });
+    suppressChange = false;
+  };
+
+  const setThemeButton = (button, dark) => {
+    if (button) {
+      button.textContent = dark ? 'Light' : 'Dark';
+      button.setAttribute('aria-pressed', dark ? 'true' : 'false');
+    }
+  };
+
+  const outputDark = () => localStorage.getItem(getStoreKey('cpp-lab:output-theme')) === 'dark';
+  const editorDark = () => localStorage.getItem(getStoreKey('cpp-lab:editor-theme')) === 'dark';
+
+  const setOutputTheme = (dark) => {
+    if (outputPane) {
+      outputPane.classList.toggle('is-dark', dark);
+    }
+    setThemeButton(outputThemeButton, dark);
+    localStorage.setItem(getStoreKey('cpp-lab:output-theme'), dark ? 'dark' : 'light');
+  };
+
+  const editorThemeExtension = (dark) => {
+    if (!cm) {
+      return [];
+    }
+    if (dark) {
+      return cm.oneDark;
+    }
+    return cm.EditorView.theme({
+      '&': {
+        backgroundColor: '#dbeafe',
+        color: '#111827',
+      },
+      '.cm-content': {
+        caretColor: '#0f172a',
+      },
+      '.cm-gutters': {
+        backgroundColor: '#dbeafe',
+        color: '#64748b',
+        borderRightColor: 'rgba(81, 67, 57, 0.16)',
+      },
+      '&.cm-focused .cm-cursor': {
+        borderLeftColor: '#0f172a',
+      },
+      '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+        backgroundColor: 'rgba(37, 99, 235, 0.26)',
+      },
+      '.cm-activeLine': {
+        backgroundColor: 'rgba(255, 255, 255, 0.34)',
+      },
+      '.cm-activeLineGutter': {
+        backgroundColor: 'rgba(255, 255, 255, 0.44)',
+      },
+    });
+  };
+
+  const applyEditorTheme = (dark) => {
+    if (editorPane) {
+      editorPane.classList.toggle('is-dark', dark);
+    }
+    setThemeButton(editorThemeButton, dark);
+    localStorage.setItem(getStoreKey('cpp-lab:editor-theme'), dark ? 'dark' : 'light');
+    if (editorView && cm) {
+      editorView.dispatch({
+        effects: cm.themeCompartment.reconfigure(editorThemeExtension(dark)),
+      });
+    }
+  };
+
+  const markDirty = (path, dirty) => {
+    if (!path) {
+      return;
+    }
+    if (dirty) {
+      dirtyFiles[path] = editorValue();
+    } else {
+      delete dirtyFiles[path];
+    }
+    const dirtyCount = Object.keys(dirtyFiles).length;
+    setStatus(dirtyCount ? `${dirtyCount} unsaved file(s).` : 'Saved.');
+  };
+
+  const saveFile = async (path, content) => {
+    const response = await fetch('/_api/cpp-lab/file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, content }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || 'Failed to save file.');
+    }
+    markDirty(path, false);
+    return result;
+  };
+
+  const loadFile = async (path) => {
+    if (!path || !editorView) {
+      return;
+    }
+    activePath = path;
+    setStatus(`Loading ${path}...`);
+    try {
+      const response = await fetch(`/_api/cpp-lab/file?path=${encodeURIComponent(path)}`);
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || 'Failed to load file.');
+      }
+      setEditorValue(result.content || '');
+      markDirty(path, false);
+      setStatus(`Loaded ${path}.`);
+      editorView.focus();
+    } catch (error) {
+      setStatus(error && error.message ? error.message : 'Failed to load file.');
+    }
+  };
+
+  const outputResult = (result) => {
+    const parts = compileResultParts(result);
+    const lines = [];
+    if (result.phase === 'compile') {
+      lines.push(parts.compile);
+    } else if (result.phase === 'validation' && result.error) {
+      lines.push(result.error);
+    } else {
+      if (parts.runtime) {
+        lines.push(parts.runtime);
+      }
+      if (result.compile_stderr || result.compile_stdout) {
+        lines.push('', '[compile diagnostics]', parts.compile);
+      }
+    }
+    lines.push('', result.ok ? '=== Code Execution Successful ===' : `=== ${parts.status} ===`);
+    if (output) {
+      output.textContent = lines.join('\\n').trim();
+      output.classList.toggle('is-error', !result.ok);
+    }
+    setStatus(parts.status);
+  };
+
+  const runLab = async () => {
+    if (!runButton || runButton.disabled || !editorView) {
+      return;
+    }
+    if (activePath) {
+      dirtyFiles[activePath] = editorValue();
+    }
+    runButton.disabled = true;
+    runButton.textContent = 'Running...';
+    setStatus('Saving and compiling...');
+    if (output) {
+      output.textContent = 'Saving files, then compiling...';
+      output.classList.remove('is-error');
+    }
+    try {
+      const files = Object.entries(dirtyFiles).map(([path, content]) => ({ path, content }));
+      const response = await fetch('/_api/cpp-lab/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files }),
+      });
+      const result = await response.json();
+      if (!response.ok && result.error) {
+        throw new Error(result.error);
+      }
+      Object.keys(dirtyFiles).forEach((path) => delete dirtyFiles[path]);
+      outputResult(result);
+      if (activePath) {
+        loadFile(activePath);
+      }
+    } catch (error) {
+      if (output) {
+        output.textContent = error && error.message ? error.message : 'Run failed.';
+        output.classList.add('is-error');
+      }
+      setStatus(error && error.message ? error.message : 'Run failed.');
+    } finally {
+      runButton.disabled = false;
+      runButton.textContent = 'Run Alt+C';
+    }
+  };
+
+  const saveActiveFile = async () => {
+    if (!saveButton || !activePath || !editorView) {
+      return;
+    }
+    saveButton.disabled = true;
+    try {
+      await saveFile(activePath, editorValue());
+      setStatus(`Saved ${activePath}.`);
+    } catch (error) {
+      setStatus(error && error.message ? error.message : 'Save failed.');
+    } finally {
+      saveButton.disabled = false;
+    }
+  };
+
+  const showEditorLoadError = (error) => {
+    if (editorMount) {
+      editorMount.innerHTML = `<div class="cpp-lab-editor-error">CodeMirror failed to load from CDN.\\n${escapeHtml(error && error.message ? error.message : error)}</div>`;
+    }
+    setStatus('CodeMirror failed to load from CDN.');
+  };
+
+  const initEditor = async () => {
+    if (!editorMount) {
+      return;
+    }
+    setStatus('Loading CodeMirror...');
+    try {
+      const [codemirrorModule, cppModule, stateModule, viewModule, commandsModule, oneDarkModule] = await Promise.all([
+        import(CDN.codemirror),
+        import(CDN.cpp),
+        import(CDN.state),
+        import(CDN.view),
+        import(CDN.commands),
+        import(CDN.oneDark),
+      ]);
+      cm = {
+        EditorView: codemirrorModule.EditorView,
+        basicSetup: codemirrorModule.basicSetup,
+        cpp: cppModule.cpp,
+        Compartment: stateModule.Compartment,
+        keymap: viewModule.keymap,
+        indentWithTab: commandsModule.indentWithTab,
+        oneDark: oneDarkModule.oneDark,
+        themeCompartment: new stateModule.Compartment(),
+      };
+      const keyBindings = [
+        {
+          key: 'Alt-c',
+          run: () => {
+            runLab();
+            return true;
+          },
+        },
+        {
+          key: 'Mod-Enter',
+          run: () => {
+            runLab();
+            return true;
+          },
+        },
+        {
+          key: 'Mod-s',
+          run: () => {
+            saveActiveFile();
+            return true;
+          },
+        },
+        commandsModule.indentWithTab,
+      ];
+      if (commandsModule.toggleComment) {
+        keyBindings.push({ key: 'Mod-/', run: commandsModule.toggleComment });
+      }
+      const shortcutMap = cm.keymap.of(keyBindings);
+      editorMount.textContent = '';
+      editorView = new cm.EditorView({
+        doc: '',
+        parent: editorMount,
+        extensions: [
+          cm.basicSetup,
+          cm.cpp(),
+          shortcutMap,
+          cm.themeCompartment.of(editorThemeExtension(editorDark())),
+          cm.EditorView.updateListener.of((update) => {
+            if (update.docChanged && !suppressChange) {
+              markDirty(activePath, true);
+            }
+          }),
+        ],
+      });
+      applyEditorTheme(editorDark());
+      if (activePath) {
+        await loadFile(activePath);
+      }
+    } catch (error) {
+      showEditorLoadError(error);
+    }
+  };
+
+  setOutputTheme(outputDark());
+
+  if (fileSelect) {
+    fileSelect.addEventListener('change', () => {
+      loadFile(fileSelect.value);
+    });
+  }
+
+  if (saveButton) {
+    saveButton.addEventListener('click', saveActiveFile);
+  }
+
+  if (runButton) {
+    runButton.addEventListener('click', runLab);
+  }
+
+  if (clearButton) {
+    clearButton.addEventListener('click', () => {
+      if (output) {
+        output.textContent = 'Output cleared.';
+        output.classList.remove('is-error');
+      }
+      setStatus('Output cleared.');
+    });
+  }
+
+  if (editorThemeButton) {
+    editorThemeButton.addEventListener('click', () => applyEditorTheme(!editorDark()));
+  }
+
+  if (outputThemeButton) {
+    outputThemeButton.addEventListener('click', () => setOutputTheme(!outputDark()));
+  }
+
+  document.addEventListener('keydown', (event) => {
+    const key = String(event.key || '').toLowerCase();
+    if (event.altKey && key === 'c') {
+      event.preventDefault();
+      runLab();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      runLab();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && key === 's') {
+      event.preventDefault();
+      saveActiveFile();
+    }
+  });
+
+  initEditor();
 }
 
 function escapeRegExp(value) {
@@ -4226,6 +5601,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindOverviewPage();
     bindCardPage();
     bindPlaygroundPanel();
+    bindCppLab();
     bindNotePanel();
     registerServiceWorker();
   };
@@ -4729,6 +6105,202 @@ def compile_cpp_submission(source: str, stdin_data: str = "", language: str = CP
         }
 
 
+def is_cpp_lab_file(path: Path) -> bool:
+    return path.name in CPP_LAB_FILE_NAMES or path.suffix.lower() in CPP_LAB_EXTENSIONS
+
+
+def cpp_lab_relative_path(path: Path, root: Optional[Path] = None) -> str:
+    root = root or CPP_LAB_ROOT
+    resolved_root = root.resolve()
+    resolved_path = (resolved_root / path).resolve() if not path.is_absolute() else path.resolve()
+    try:
+        relative = resolved_path.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError("Path must stay inside the C++ lab project.") from exc
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise ValueError("Invalid file path.")
+    if any(part in CODE_PROJECT_EXCLUDED_DIRS for part in relative.parts[:-1]):
+        raise ValueError("Path is excluded from editing.")
+    if not is_cpp_lab_file(resolved_path):
+        raise ValueError("File type is not editable in the C++ lab.")
+    return relative.as_posix()
+
+
+def cpp_lab_file_path(relative_path: str, root: Optional[Path] = None) -> Path:
+    root = root or CPP_LAB_ROOT
+    relative = cpp_lab_relative_path(Path(relative_path), root)
+    return (root.resolve() / relative).resolve()
+
+
+def cpp_lab_files(root: Optional[Path] = None) -> Tuple[CodeFile, ...]:
+    root = root or CPP_LAB_ROOT
+    if not root.exists():
+        return ()
+
+    files: List[CodeFile] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or not is_cpp_lab_file(path):
+            continue
+        try:
+            relative_path = cpp_lab_relative_path(path, root)
+        except ValueError:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        files.append(
+            CodeFile(
+                relative_path=relative_path,
+                language=code_file_language(relative_path),
+                content=content,
+            )
+        )
+    return tuple(files)
+
+
+def cpp_lab_default_file(files: Sequence[CodeFile]) -> str:
+    if any(file.relative_path == CPP_LAB_MAIN_FILE for file in files):
+        return CPP_LAB_MAIN_FILE
+    return files[0].relative_path if files else CPP_LAB_MAIN_FILE
+
+
+def read_cpp_lab_file(relative_path: str, root: Optional[Path] = None) -> CodeFile:
+    root = root or CPP_LAB_ROOT
+    path = cpp_lab_file_path(relative_path, root)
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(relative_path)
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    return CodeFile(
+        relative_path=cpp_lab_relative_path(path, root),
+        language=code_file_language(path.name),
+        content=content,
+    )
+
+
+def save_cpp_lab_file(relative_path: str, content: str, root: Optional[Path] = None) -> CodeFile:
+    root = root or CPP_LAB_ROOT
+    if len(content) > MAX_SOURCE_CHARS:
+        raise ValueError(f"Source too large; limit is {MAX_SOURCE_CHARS} characters.")
+    path = cpp_lab_file_path(relative_path, root)
+    if not path.parent.exists():
+        raise ValueError("Parent directory does not exist.")
+    path.write_text(content, encoding="utf-8")
+    return read_cpp_lab_file(relative_path, root)
+
+
+def compile_cpp_lab_project(stdin_data: str = "", root: Optional[Path] = None) -> Dict[str, object]:
+    root = root or CPP_LAB_ROOT
+    source_path = cpp_lab_file_path(CPP_LAB_MAIN_FILE, root)
+    if not source_path.exists():
+        return {
+            "ok": False,
+            "phase": "validation",
+            "error": f"Missing runnable file: {CPP_LAB_MAIN_FILE}",
+        }
+
+    with tempfile.TemporaryDirectory(prefix="cpp_lab_compile_") as tmpdir:
+        executable_path = Path(tmpdir) / "main.out"
+        compile_cmd = [
+            "g++",
+            "-std=c++17",
+            "-O0",
+            "-pipe",
+            "-Wall",
+            "-Wextra",
+            "-pedantic",
+            str(source_path),
+            "-o",
+            str(executable_path),
+        ]
+        try:
+            compile_proc = subprocess.run(
+                compile_cmd,
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=COMPILE_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "ok": False,
+                "phase": "compile",
+                "compiled": False,
+                "compile_returncode": None,
+                "compile_stdout": truncate_text(exc.stdout or ""),
+                "compile_stderr": truncate_text(
+                    (exc.stderr or "")
+                    + f"\nCompilation timed out after {COMPILE_TIMEOUT_SECONDS} seconds."
+                ),
+                "run_returncode": None,
+                "run_stdout": "",
+                "run_stderr": "",
+                "run_timed_out": False,
+            }
+
+        compile_stdout = truncate_text(compile_proc.stdout)
+        compile_stderr = truncate_text(compile_proc.stderr)
+        if compile_proc.returncode != 0:
+            return {
+                "ok": False,
+                "phase": "compile",
+                "compiled": False,
+                "compile_returncode": compile_proc.returncode,
+                "compile_stdout": compile_stdout,
+                "compile_stderr": compile_stderr,
+                "run_returncode": None,
+                "run_stdout": "",
+                "run_stderr": "",
+                "run_timed_out": False,
+            }
+
+        run_proc = subprocess.Popen(
+            [str(executable_path)],
+            cwd=str(root),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            run_stdout, run_stderr = run_proc.communicate(
+                input=stdin_data, timeout=RUN_TIMEOUT_SECONDS)
+            run_timed_out = False
+        except subprocess.TimeoutExpired:
+            run_timed_out = True
+            try:
+                os.killpg(run_proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            run_stdout, run_stderr = run_proc.communicate()
+
+        run_stdout = truncate_text(run_stdout or "")
+        run_stderr = truncate_text(run_stderr or "")
+        run_returncode = run_proc.returncode
+        if run_timed_out:
+            run_stderr = (run_stderr + "\n" if run_stderr else "") + \
+                f"Execution timed out after {RUN_TIMEOUT_SECONDS} seconds."
+
+        return {
+            "ok": (not run_timed_out) and run_returncode == 0,
+            "phase": "run",
+            "compiled": True,
+            "compile_returncode": compile_proc.returncode,
+            "compile_stdout": compile_stdout,
+            "compile_stderr": compile_stderr,
+            "run_returncode": run_returncode,
+            "run_stdout": run_stdout,
+            "run_stderr": run_stderr,
+            "run_timed_out": run_timed_out,
+        }
+
+
 def safe_slug_path_component(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._") or "item"
 
@@ -4902,6 +6474,7 @@ def render_top_nav(notebooks: Sequence[Notebook], active: str = "home") -> str:
         <a class="top-nav-link {"is-active" if active == "home" else ""}" href="/">Home</a>
         {notebook_links}
         <a class="top-nav-link {"is-active" if active == CODE_READING_SLUG else ""}" href="/{CODE_READING_SLUG}">Code Reading</a>
+        <a class="top-nav-link {"is-active" if active == CPP_LAB_SLUG else ""}" href="/{CPP_LAB_SLUG}">C++ Lab</a>
         <a class="top-nav-link {"is-active" if active == "saved" else ""}" href="/saved">Saved</a>
         <a class="top-nav-link {"is-active" if active == "notes" else ""}" href="/notes">My Notes</a>
       </nav>
@@ -5016,6 +6589,67 @@ def home_note_entries(persistent_state: Optional[Dict[str, object]]) -> List[str
     return [entry["html"] for entry in entries]
 
 
+def render_cpp_lab_page(notebooks: Sequence[Notebook]) -> str:
+    files = cpp_lab_files()
+    default_file = cpp_lab_default_file(files)
+    options = "".join(
+        f'<option value="{html.escape(file.relative_path, quote=True)}" {"selected" if file.relative_path == default_file else ""}>{html.escape(file.relative_path)}</option>'
+        for file in files
+    )
+    if not options:
+        options = f'<option value="{CPP_LAB_MAIN_FILE}">{CPP_LAB_MAIN_FILE}</option>'
+
+    body = f"""
+    <div class="app-shell" data-cpp-lab-root>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">C++ code lab</p>
+          <h1>C++ Lab</h1>
+          <p class="lede">Edit files from `cpp_awssome_project/random_pj` with CodeMirror 6, save changes to disk, and run `random_code.cpp` with g++.</p>
+        </div>
+        <div class="hero-card">
+          <div class="stat">{len(files)}</div>
+          <div class="stat-label">files</div>
+        </div>
+      </section>
+      {render_top_nav(notebooks, CPP_LAB_SLUG)}
+      <section class="cpp-lab-shell">
+        <div class="cpp-lab-toolbar">
+          <select class="cpp-lab-file-select" data-cpp-lab-file-select aria-label="C++ lab file">
+            {options}
+          </select>
+          <div class="cpp-lab-actions">
+            <span class="cpp-lab-shortcuts">Alt+C run · Ctrl+Enter run · Ctrl+S save · Ctrl+/ comment</span>
+            <button class="button-secondary" type="button" data-cpp-lab-save title="Save current file (Ctrl+S)">Save</button>
+            <button class="button" type="button" data-cpp-lab-run data-cpp-lab-run-shortcut accesskey="c" title="Save all dirty files and run random_code.cpp (Alt+C)">Run Alt+C</button>
+            <button class="button-secondary" type="button" data-cpp-lab-clear>Clear</button>
+          </div>
+        </div>
+        <div class="cpp-lab-status" data-cpp-lab-status>Loading project...</div>
+        <div class="cpp-lab-layout">
+          <section class="cpp-lab-pane" data-cpp-lab-editor-pane>
+            <div class="cpp-lab-pane-head">
+              <div class="cpp-lab-title">Code</div>
+              <button class="button-secondary" type="button" data-cpp-lab-editor-theme aria-pressed="false">Dark</button>
+            </div>
+            <div class="cpp-lab-editor-wrap">
+              <div class="cpp-lab-editor-mount" data-cpp-lab-editor-mount aria-label="C++ source editor"></div>
+            </div>
+          </section>
+          <section class="cpp-lab-pane" data-cpp-lab-output-pane>
+            <div class="cpp-lab-pane-head">
+              <div class="cpp-lab-title">Output</div>
+              <button class="button-secondary" type="button" data-cpp-lab-output-theme aria-pressed="false">Dark</button>
+            </div>
+            <pre class="cpp-lab-output" data-cpp-lab-output>Run code to see output.</pre>
+          </section>
+        </div>
+      </section>
+    </div>
+    """
+    return render_page("C++ Lab", body, boot_data=boot_payload(notebooks))
+
+
 def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[str, object]] = None) -> str:
     tiles = []
     for notebook in notebooks:
@@ -5032,6 +6666,24 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
             </a>
             """
         )
+
+    lab_files = cpp_lab_files()
+    tiles.append(
+        f"""
+        <a class="card-tile" href="/{CPP_LAB_SLUG}">
+          <div class="card-meta">
+            <span class="card-number">{len(lab_files)}</span>
+            <span>{len(lab_files)} files</span>
+          </div>
+          <h3>C++ Lab</h3>
+          <p class="card-preview">Edit and run the files in cpp_awssome_project/random_pj directly from the browser.</p>
+          <div class="tag-row">
+            <span class="tag">editor</span>
+            <span class="tag">g++</span>
+          </div>
+        </a>
+        """
+    )
 
     body = f"""
     <div class="app-shell" data-home-root data-notebook-root data-total-cards="{sum(len(n.cards) for n in notebooks)}">
@@ -6013,9 +7665,22 @@ class FlashcardServer(BaseHTTPRequestHandler):
                 self.notebooks, self.state_store.snapshot()), send_body=send_body)
             return
 
+        if route == f"/{CPP_LAB_SLUG}":
+            self.send_html(render_cpp_lab_page(
+                self.notebooks), send_body=send_body)
+            return
+
         if route == f"/{CODE_READING_SLUG}":
             self.send_html(render_code_reading_overview(
                 self.notebooks, code_projects()), send_body=send_body)
+            return
+
+        if route == "/_api/cpp-lab/files":
+            self.handle_cpp_lab_files(send_body=send_body)
+            return
+
+        if route == "/_api/cpp-lab/file":
+            self.handle_cpp_lab_file_read(parsed.query, send_body=send_body)
             return
 
         if route == "/_api/state":
@@ -6133,6 +7798,14 @@ class FlashcardServer(BaseHTTPRequestHandler):
             self.handle_state_update(send_body=send_body)
             return
 
+        if route == "/_api/cpp-lab/file":
+            self.handle_cpp_lab_file_save(send_body=send_body)
+            return
+
+        if route == "/_api/cpp-lab/run":
+            self.handle_cpp_lab_run(send_body=send_body)
+            return
+
         if route == "/_api/note-attachment":
             self.handle_note_attachment_upload(send_body=send_body)
             return
@@ -6142,6 +7815,126 @@ class FlashcardServer(BaseHTTPRequestHandler):
             return
 
         self.send_not_found(send_body=send_body)
+
+    def read_json_body(self) -> Dict[str, object]:
+        content_length = int(self.headers.get("Content-Length", "0") or "0")
+        raw_body = self.rfile.read(
+            content_length) if content_length > 0 else b""
+        try:
+            payload = json.loads(raw_body.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("Invalid JSON payload.") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("JSON payload must be an object.")
+        return payload
+
+    def cpp_lab_file_payload(self, code_file: CodeFile) -> Dict[str, object]:
+        return {
+            "ok": True,
+            "path": code_file.relative_path,
+            "language": code_file.language,
+            "content": code_file.content,
+            "highlighted": highlight_code(code_file.content, code_file.language),
+        }
+
+    def handle_cpp_lab_files(self, send_body: bool) -> None:
+        files = cpp_lab_files()
+        try:
+            root_label = CPP_LAB_ROOT.relative_to(ROOT).as_posix()
+        except ValueError:
+            root_label = CPP_LAB_ROOT.as_posix()
+        self.send_json(
+            {
+                "ok": True,
+                "root": root_label,
+                "defaultFile": cpp_lab_default_file(files),
+                "files": [
+                    {
+                        "path": file.relative_path,
+                        "language": file.language,
+                        "size": len(file.content),
+                    }
+                    for file in files
+                ],
+            },
+            send_body=send_body,
+        )
+
+    def handle_cpp_lab_file_read(self, query: str, send_body: bool) -> None:
+        path = parse_qs(query).get("path", [""])[0]
+        if not path:
+            self.send_json({"ok": False, "error": "path is required."},
+                           status=400, send_body=send_body)
+            return
+        try:
+            code_file = read_cpp_lab_file(path)
+        except FileNotFoundError:
+            self.send_json({"ok": False, "error": "File not found."},
+                           status=404, send_body=send_body)
+            return
+        except (OSError, ValueError) as exc:
+            self.send_json({"ok": False, "error": str(exc)},
+                           status=400, send_body=send_body)
+            return
+        self.send_json(self.cpp_lab_file_payload(code_file), send_body=send_body)
+
+    def handle_cpp_lab_file_save(self, send_body: bool) -> None:
+        try:
+            payload = self.read_json_body()
+        except ValueError as exc:
+            self.send_json({"ok": False, "error": str(exc)},
+                           status=400, send_body=send_body)
+            return
+
+        path = payload.get("path", "")
+        content = payload.get("content", "")
+        if not isinstance(path, str) or not isinstance(content, str):
+            self.send_json({"ok": False, "error": "path and content must be strings."},
+                           status=400, send_body=send_body)
+            return
+
+        try:
+            code_file = save_cpp_lab_file(path, content)
+        except (OSError, ValueError) as exc:
+            self.send_json({"ok": False, "error": str(exc)},
+                           status=400, send_body=send_body)
+            return
+        self.send_json(self.cpp_lab_file_payload(code_file), send_body=send_body)
+
+    def handle_cpp_lab_run(self, send_body: bool) -> None:
+        try:
+            payload = self.read_json_body()
+        except ValueError as exc:
+            self.send_json({"ok": False, "error": str(exc)},
+                           status=400, send_body=send_body)
+            return
+
+        files = payload.get("files", [])
+        stdin_data = payload.get("stdin", "")
+        if not isinstance(files, list) or not isinstance(stdin_data, str):
+            self.send_json({"ok": False, "error": "files must be a list and stdin must be a string."},
+                           status=400, send_body=send_body)
+            return
+
+        saved_files: List[str] = []
+        try:
+            for item in files:
+                if not isinstance(item, dict):
+                    raise ValueError("Each file entry must be an object.")
+                path = item.get("path", "")
+                content = item.get("content", "")
+                if not isinstance(path, str) or not isinstance(content, str):
+                    raise ValueError("Each file entry needs string path and content.")
+                code_file = save_cpp_lab_file(path, content)
+                saved_files.append(code_file.relative_path)
+            result = compile_cpp_lab_project(stdin_data=stdin_data)
+        except (OSError, ValueError) as exc:
+            self.send_json({"ok": False, "phase": "validation", "error": str(exc)},
+                           status=400, send_body=send_body)
+            return
+
+        result["saved_files"] = saved_files
+        self.send_json(result, status=200, send_body=send_body)
 
     def handle_attachment_request(self, route: str, send_body: bool) -> None:
         parts = [part for part in route.split("/") if part]
