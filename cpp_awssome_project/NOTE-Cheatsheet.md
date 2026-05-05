@@ -580,6 +580,63 @@ bool empty() const {
 
 ---
 
+## `enum` vs `enum class`
+
+### Scope
+
+```cpp
+// C++98 enum: enumerators leak into the surrounding scope
+enum Color { Red, Green, Blue };
+enum Status { Red, Green, Blue };  // error: Red/Green/Blue redefined
+
+// C++11 enum class: enumerators are scoped inside the enum type
+enum class Color { Red, Green, Blue };
+enum class Status { Red, Green, Blue };  // OK
+```
+
+```cpp
+Color c = Color::Red;  // OK
+// Color c = Red;      // error: enum class needs the scope prefix
+```
+
+### Implicit `int` Conversion
+
+```cpp
+enum Old { A = 1, B = 2 };
+
+int x = A;        // OK: old enum implicitly converts to int
+if (x == 1) { }   // OK
+int y = A + 5;    // OK, but often semantically suspicious
+```
+
+```cpp
+enum class New { A = 1, B = 2 };
+
+// int z = New::A;                 // error: no implicit int conversion
+int z = static_cast<int>(New::A);  // OK: explicit conversion
+```
+
+### Underlying Type
+
+```cpp
+#include <cstdint>
+
+enum Old { A = 1 };                    // underlying type chosen by compiler
+enum class New : std::uint8_t { A = 1 }; // explicit underlying type
+```
+
+| Feature | `enum` | `enum class` |
+|---|---|---|
+| Scope | Leaks enumerators | Scoped, e.g. `Color::Red` |
+| Implicit `int` conversion | Yes | No, use `static_cast<int>` |
+| Name collisions | Possible | Avoided |
+| Underlying type | C++11 can specify; otherwise implementation-chosen | Defaults to `int`; can specify `: std::uint8_t` |
+| Modern recommendation | Avoid for new state/category types | Prefer |
+
+> **Rule**: use `enum class` for new C++ code unless you specifically need old C-style integer interop.
+
+---
+
 ## Common Error Messages
 
 | Error | Likely Cause | Fix |

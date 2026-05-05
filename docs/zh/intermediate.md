@@ -328,13 +328,6 @@ private:
 
 ### 代码讲解
 
-- `data` 是手动管理的裸指针资源
-- 构造函数里 `new char[...]` 申请内存并复制字符串
-- 拷贝构造里再次 `new` 一份内存，体现深拷贝
-- 析构函数 `delete[] data;` 负责释放资源
-
-### 代码讲解
-
 - `data = new char[...]` 表示对象内部自己管理一块动态内存
 - `Text(const Text& other)` 里重新分配内存并复制内容，体现深拷贝
 - `~Text()` 里 `delete[] data;` 负责释放资源
@@ -372,7 +365,7 @@ In an English interview, I would answer it like this:
 
 ### 项目里怎么说
 
-我会默认从 `unique_ptr` 开始建模；只有对象确实有多个独立拥有者时才升级到 `shared_ptr`，并明确哪些方向需要用 `weak_ptr` 打破环。
+我会默认从 `unique_ptr` 开始建模，因为它表达“只有一个负责人释放资源”，接口和生命周期都最清楚。只有对象确实被多个独立模块共同延长生命周期时，才使用 `shared_ptr`；一旦出现双向关系、缓存、观察者或回调注册，就要主动设计哪一侧用 `weak_ptr` 表达非拥有关系。
 
 ### 深入解释
 
@@ -385,25 +378,32 @@ In an English interview, I would answer it like this:
 
 ```cpp
 #include <memory>
+#include <vector>
 
 class Node {
 public:
     std::shared_ptr<Node> next;
     std::weak_ptr<Node> prev;
 };
+
+class Pipeline {
+public:
+    void add(std::unique_ptr<Node> node) {
+        nodes_.push_back(std::move(node));
+    }
+
+private:
+    std::vector<std::unique_ptr<Node>> nodes_;
+};
 ```
-
-### 代码讲解
-
-- `next` 用 `shared_ptr` 表示对后继节点的拥有关系
-- `prev` 用 `weak_ptr` 表示回指前驱但不拥有它
-- 这段代码重点是说明：双向关系里常要用 `weak_ptr` 避免引用环
 
 ### 代码讲解
 
 - `std::shared_ptr<Node> next;` 表示当前节点共享拥有下一个节点
 - `std::weak_ptr<Node> prev;` 表示前驱只是观察关系，不参与拥有
-- 重点是看清：`weak_ptr` 在这里是为了避免双向关系形成引用环
+- `Pipeline::add(std::unique_ptr<Node> node)` 表示调用方把节点所有权交给流水线
+- `std::move(node)` 是所有权转移，不是普通复制
+- 重点是看清：智能指针首先是所有权建模工具，不是“自动 delete 的高级裸指针”
 
 ---
 
@@ -433,7 +433,7 @@ They are safer, more concise, and can reduce the exception path problems caused 
 
 ### 项目里怎么说
 
-只要没有自定义删除器或其他特殊分配要求，我会优先使用 `make_unique`/`make_shared`，因为这样代码更统一，也更不容易在异常路径留下资源问题。
+只要没有自定义删除器、私有构造控制或特殊内存资源要求，我会优先使用 `make_unique`/`make_shared`，因为对象构造和智能指针绑定在同一个表达式里完成，异常路径更简单。需要注意的是，`make_shared` 可能让对象和控制块一次分配，这通常更快，但弱引用长期存在时也可能延长对象内存块的保留时间。
 
 ### 深入解释
 
@@ -462,13 +462,8 @@ int main() {
 
 - `make_unique` 创建独占所有权对象
 - `make_shared` 创建共享所有权对象
-- 这段代码重点不是输出，而是观察对象创建和所有权绑定在同一表达式完成
-
-### 代码讲解
-
-- `std::make_unique<Task>(1)` 创建独占所有权对象
-- `std::make_shared<Task>(2)` 创建共享所有权对象
 - 这段代码重点看：对象创建和智能指针绑定在一个表达式里完成，更安全也更统一
+- 如果需要自定义 deleter 或特殊分配策略，才考虑显式构造智能指针
 
 ---
 
@@ -476,7 +471,7 @@ int main() {
 
 ### 核心答案
 
-模板让你写类型无关的泛型代码，并在编译期生成具体实例。
+模板让你写类型无关的泛型代码，并在编译期生成具体实例。它是 STL、traits、泛型算法和零开销抽象的基础，但工程上要控制模板复杂度、编译时间和错误信息成本。
 
 
 ### English explanation
@@ -498,7 +493,7 @@ Templates let you write type-independent generic code and generate concrete inst
 
 ### 项目里怎么说
 
-我倾向只在真正能消除重复、又不会显著增加阅读成本的地方用模板。业务逻辑不会为了泛型而泛型，但基础组件和通用容器、工具函数适合模板化。
+我倾向只在真正能消除重复、表达类型约束、或把运行时分发前移到编译期时使用模板。业务逻辑不会为了泛型而泛型；基础组件、容器适配、序列化工具、数值算法和类型安全封装更适合模板化。C++20 可用 concepts 把模板要求写在接口上，降低调用错误的诊断成本。
 
 ### 深入解释
 
@@ -528,14 +523,8 @@ int main() {
 - `template <typename T>` 声明模板参数
 - `maxValue(3, 5)` 推导出 `T = int`
 - `maxValue(2.5, 7.1)` 推导出 `T = double`
-- 重点看同一个模板函数如何按不同类型实例化
-
-### 代码讲解
-
-- `template <typename T>` 声明这是函数模板
-- `maxValue(3, 5)` 会实例化出 `int` 版本
-- `maxValue(2.5, 7.1)` 会实例化出 `double` 版本
 - 重点是看：模板用“一份逻辑”适配多种类型
+- 如果模板约束变复杂，现代 C++ 更推荐用 concepts 或清晰的 traits 辅助表达要求
 
 ---
 
@@ -592,13 +581,6 @@ int main() {
     static_assert(std::is_same_v<std::remove_reference_t<ValueType>, int>);
 }
 ```
-
-### 代码讲解
-
-- `auto it = nums.begin();` 用 `auto` 简化迭代器类型
-- `decltype(*it)` 根据表达式推导类型
-- `using ValueType = ...` 是类型别名
-- `static_assert(...)` 在编译期验证推导类型是否正确
 
 ### 代码讲解
 
@@ -662,13 +644,6 @@ public:
     void run() override {}
 };
 ```
-
-### 代码讲解
-
-- `virtual void run()` 声明动态分发接口
-- `override` 要求编译器确认它确实在重写基类函数
-- `final` 表示 `Derived` 不能再被继承
-- 这段代码重点在于三个关键字各自承担不同职责
 
 ### 代码讲解
 
@@ -736,12 +711,6 @@ int main() {
 
 ### 代码讲解
 
-- `push_back(User{"Alice", 20})` 先构造临时对象，再放入容器
-- `emplace_back("Bob", 22)` 直接把构造参数交给容器，原地构造元素
-- 重点是区分“塞一个现成对象”和“在容器里构造对象”
-
-### 代码讲解
-
 - `users.push_back(User{"Alice", 20});` 先构造临时对象，再放入容器
 - `users.emplace_back("Bob", 22);` 直接把构造参数交给容器原地构造元素
 - 这段代码重点看“已有对象插入”和“原地构造”两种思路
@@ -782,7 +751,7 @@ Exception safety describes whether the program state is still acceptable after a
 
 ### 项目里怎么说
 
-在资源类、容器封装和事务式操作里，我会优先考虑强保证或至少基本保证；在析构、swap 和清理类逻辑里，会更关注 `noexcept` 和不抛异常保证。
+在资源类、容器封装和事务式操作里，我会优先保证至少基本保证：资源不泄漏、对象不半坏。如果接口语义像“替换配置”“提交批量结果”，我会尽量用先构造临时对象、成功后 swap/commit 的方式提供强保证；析构、释放资源、移动和 swap 路径则要特别关注 `noexcept`。
 
 ### 深入解释
 
@@ -790,6 +759,35 @@ Exception safety describes whether the program state is still acceptable after a
 - 基本保证关注“不会泄漏、对象仍有效”，强保证关注“失败即回滚”
 - 不抛异常保证在析构函数、移动操作、清理路径上尤其关键
 - RAII 和清晰的所有权模型，是获得异常安全的前提
+
+### 示例
+
+```cpp
+#include <string>
+#include <utility>
+#include <vector>
+
+class NameList {
+public:
+    void replaceAll(std::vector<std::string> next) {
+        names_.swap(next); // next 构造成功后再提交新状态
+    }
+
+    void add(std::string name) {
+        names_.push_back(std::move(name)); // 至少保持 vector 的异常安全保证
+    }
+
+private:
+    std::vector<std::string> names_;
+};
+```
+
+### 代码讲解
+
+- `replaceAll` 的参数 `next` 在函数体执行前已经构造完成，构造失败不会影响 `names_`
+- `swap` 是提交动作，成功后当前对象获得新状态，旧状态随 `next` 析构释放
+- `add` 依赖 `std::vector` 和 `std::string` 的 RAII 管理资源，异常时不会泄漏
+- 面试重点是：异常安全不是多写 `try/catch`，而是设计好资源所有权和状态提交顺序
 
 ---
 
@@ -847,13 +845,6 @@ int main() {
     hashed[1] = 10;
 }
 ```
-
-### 代码讲解
-
-- `ordered` 是有序映射容器
-- `hashed` 是无序哈希映射容器
-- 两者插入方式相似，但遍历顺序和底层结构不同
-- 重点不是 API 相同，而是组织方式不同
 
 ### 代码讲解
 
@@ -1346,12 +1337,13 @@ int main() {
 - 移动构造从临时或可被移动对象接管资源
 - 移动赋值要处理已有资源、自赋值和异常安全
 - 移动后源对象必须保持有效但值不作保证
+- 能用标准库成员表达资源时，优先 Rule of Zero，不要手写移动函数
 
 ### English explanation
 
 In an English interview, I would answer it like this:
 
-A move constructor and move assignment operator transfer resources from a source object, leaving the source valid but with an unspecified value.
+A move constructor and move assignment operator transfer resources from a source object, leaving the source valid but with an unspecified value. In modern C++, the best move operation is often the one generated automatically from well-designed RAII members.
 
 ### 错误回答示例
 
@@ -1366,13 +1358,15 @@ A move constructor and move assignment operator transfer resources from a source
 
 ### 项目里怎么说
 
-资源类需要自己写移动时，我会先保证源对象可析构、目标对象不泄漏旧资源，再考虑 `noexcept`。
+资源类需要自己写移动时，我会先保证三件事：目标对象不会泄漏旧资源，源对象移动后仍可析构和重新赋值，移动操作能安全标成 `noexcept`。如果成员已经是 `std::string`、`std::vector`、`unique_ptr` 这类 RAII 类型，我会优先让编译器生成移动操作。
 
 ### 深入解释
 
 - 移动构造面对的是新对象
 - 移动赋值面对的是已有对象
 - 标准库容器会偏好 `noexcept` move
+- 手写移动赋值时常见 bug 是先覆盖目标指针，忘记释放旧资源，或者没有处理自移动
+- 对拥有资源的裸指针类，移动后通常把源指针置空，让源对象保持可析构状态
 
 ### 示例
 
@@ -1407,6 +1401,8 @@ private:
 - 移动构造直接接管 `other.data_`
 - 移动赋值先释放目标旧资源
 - 把源指针置空，避免析构时重复释放
+- `noexcept` 对资源类很重要，因为容器扩容时可能据此选择移动而不是拷贝
+- 这段代码是教学用裸资源例子，真实项目里更推荐用 `unique_ptr` 成员获得 Rule of Zero
 ---
 
 ## 23. copy-and-swap idiom 是什么？
@@ -1416,6 +1412,7 @@ private:
 - 先用值参数创建副本，再和当前对象交换资源
 - 能自然处理自赋值
 - 常用于实现强异常安全的赋值操作
+- 代价是可能多一次临时对象构造或拷贝，性能敏感类型要评估成本
 
 ### English explanation
 
@@ -1436,13 +1433,15 @@ The copy-and-swap idiom implements assignment by copying first and then swapping
 
 ### 项目里怎么说
 
-如果资源类赋值逻辑复杂，我会考虑 copy-and-swap；如果性能关键，也会评估额外临时对象成本。
+如果资源类赋值逻辑复杂，我会考虑 copy-and-swap，因为它把“准备新状态”和“提交新状态”分开，容易获得强异常安全。性能关键路径上，我会评估它的额外临时对象、分配和 swap 成本；能用 Rule of Zero 的类型，通常不需要手写这个 idiom。
 
 ### 深入解释
 
 - 参数按值会触发拷贝或移动
 - 交换通常应 `noexcept`
 - 旧资源随临时对象析构自动释放
+- 这个 idiom 的关键是：先让可能失败的构造发生在提交之前
+- 如果 swap 可能抛异常，就很难声称赋值操作具备强保证
 
 ### 示例
 
@@ -1452,8 +1451,13 @@ The copy-and-swap idiom implements assignment by copying first and then swapping
 
 class Numbers {
 public:
+    friend void swap(Numbers& a, Numbers& b) noexcept {
+        using std::swap;
+        swap(a.values_, b.values_);
+    }
+
     Numbers& operator=(Numbers other) {
-        values_.swap(other.values_); // 提交新状态
+        swap(*this, other); // 提交新状态
         return *this;
     }
 
@@ -1465,8 +1469,10 @@ private:
 ### 代码讲解
 
 - `other` 是已经构造好的副本或移动结果
-- `swap` 后当前对象获得新资源
+- `swap(*this, other)` 后当前对象获得新资源
 - 旧资源在 `other` 析构时释放
+- 如果构造 `other` 失败，函数体不会执行，当前对象保持原状态
+- `swap` 标成 `noexcept`，才能支撑强异常安全的提交步骤
 ---
 
 ## 24. 自赋值和异常安全为什么要一起考虑？
@@ -1476,6 +1482,7 @@ private:
 - 自赋值是对象赋值给自己
 - 赋值过程如果先释放旧资源再拷贝新资源，可能破坏自身
 - 异常安全要求异常发生后对象仍保持合理状态
+- 更稳的设计是先准备新资源，成功后再替换旧状态
 
 ### English explanation
 
@@ -1496,13 +1503,15 @@ Self-assignment and exception safety matter because assignment often replaces ex
 
 ### 项目里怎么说
 
-写资源类赋值时，我会先构造新资源，成功后再替换旧状态，避免异常路径把对象留在半坏状态。
+写资源类赋值时，我不会只靠 `if (this == &rhs)` 兜底，而会把提交顺序设计正确：先准备新资源，成功后再替换旧资源。因为自赋值可能通过引用、容器元素别名或指针间接发生，异常也可能出现在分配和拷贝中。
 
 ### 深入解释
 
 - 自赋值可能通过别名间接发生
 - 强异常安全强调失败后状态不变
 - RAII 成员能简化异常安全
+- 对纯标准库成员类，默认生成的赋值通常已经正确处理自赋值和异常安全
+- 对手写裸资源类，错误顺序常见为“先 delete 自己，再从 rhs 读数据”，自赋值时 rhs 也被破坏
 
 ### 示例
 
@@ -1531,42 +1540,44 @@ private:
 - `this == &rhs` 处理直接自赋值
 - 临时字符串先完成构造
 - 真实资源管理由 `std::string` 负责
+- `name_ = std::move(tmp)` 是提交新状态，失败风险已经被前面的临时对象构造隔离
+- 在更复杂资源类中，copy-and-swap 往往比手写多个分支更容易保证正确
 ---
 
 ## 25. `std::string_view` 的生命周期风险是什么？
 
 ### 核心答案
 
-- `string_view` 不拥有字符内存
-- 它只保存指针和长度
-- 不能返回或保存指向临时字符串的 view
+`std::string_view` 是非拥有字符串视图，只保存指针和长度，不延长底层字符的生命周期。它适合作为只读参数，但不能长期保存指向临时 `std::string`、局部字符串或已释放缓冲区的 view。
 
 ### English explanation
 
 In an English interview, I would answer it like this:
 
-`std::string_view` is a non-owning view. It is efficient for read-only parameters, but dangerous if it outlives the referenced string.
+`std::string_view` is a non-owning view over characters. It is efficient for read-only parameters, but it becomes dangerous if the view outlives the referenced string.
 
 ### 错误回答示例
 
-- “`std::string_view` 的生命周期风险是什么？ 只是语法细节，不影响设计”
-- “只要能编译就说明用法正确”
-- “现代 C++ 特性一定总是更好”
+- “`string_view` 是更快的 `string`，可以直接替代成员变量”
+- “字符串字面量和临时 `std::string` 的生命周期一样”
+- “函数返回 `string_view` 一定没有拷贝，所以更好”
 
 ### 面试官想听什么
 
-- 你是否能说清它解决的问题
-- 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道 `string_view` 不拥有内存
+- 你是否能区分参数视图和持久化存储
+- 你是否知道悬垂 view 通常不会立刻报错，但会造成隐蔽 UB
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+我会把 `string_view` 用在“不保存，只读取”的参数上，比如解析、日志格式化、查找接口。如果类需要保存文本，我会存 `std::string`；如果函数要返回数据，也要确认返回的 view 指向的存储比调用者活得更久。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- `string_view` 没有所有权，因此不会分配、释放或拷贝字符内容
+- 它可以绑定到 `std::string`、字符串字面量、字符数组的一段连续字符
+- 最大风险是底层字符串销毁或重新分配后，view 仍被使用
+- 成员变量使用 `string_view` 时要特别谨慎，除非对象明确只是观察外部稳定存储
 
 ### 示例
 
@@ -1575,51 +1586,61 @@ In an English interview, I would answer it like this:
 #include <string>
 #include <string_view>
 
-void print(std::string_view text) { std::cout << text << '\n'; }
-int main() { std::string name = "cpp"; print(name); }
+void print(std::string_view text) {
+    std::cout << text << '
+';
+}
+
+int main() {
+    std::string name = "cpp";
+    print(name);
+    print("interview");
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- `print` 不保存 `text`，只在调用期间读取，所以 `string_view` 合适
+- `name` 在 `print(name)` 调用期间仍然存在，view 有效
+- 字符串字面量有静态存储期，`print("interview")` 也安全
+- 如果把 `text` 存到全局或异步任务里，就必须重新审视生命周期
+
 ---
 
 ## 26. `std::optional` 适合表达什么？
 
 ### 核心答案
 
-- `optional<T>` 表达可能有值也可能没有值
-- 它比用特殊值表达失败更清楚
-- 使用前应检查是否有值
+`std::optional<T>` 表达一个结果“可能有值，也可能没有值”。它适合没有复杂失败原因的查询、解析、缓存命中等场景，比 `-1`、空字符串这类特殊值更清楚。
 
 ### English explanation
 
 In an English interview, I would answer it like this:
 
-`std::optional` represents an optional value without inventing sentinel values such as -1 or empty strings.
+`std::optional` represents an optional value without inventing sentinel values. It is best for absence, not for rich error reporting.
 
 ### 错误回答示例
 
-- “`std::optional` 适合表达什么？ 只是语法细节，不影响设计”
-- “只要能编译就说明用法正确”
-- “现代 C++ 特性一定总是更好”
+- “`optional` 就是可以为空的指针”
+- “所有错误都应该用 `optional` 表达”
+- “用了 `optional` 就不用处理失败原因”
 
 ### 面试官想听什么
 
-- 你是否能说清它解决的问题
-- 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道它表达“可能没有值”，不是“失败详情”
+- 你是否能和 sentinel value、异常、错误码区分
+- 你是否会在使用前检查值存在
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+查询、解析、缓存命中这类“可能没有结果，但没有复杂错误原因”的接口，我会用 `optional<T>`。如果失败原因对调用方重要，我会使用错误码、异常或 `expected` 风格结果，而不是把所有失败都压成 `nullopt`。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- `optional<T>` 内部要么没有对象，要么原地存放一个 `T`
+- 它不是指针语义，不表达共享、借用或对象身份
+- `value()` 在无值时会抛异常，面试中更推荐展示 `if (opt)` 或 `value_or`
+- 不适合携带多种失败原因
 
 ### 示例
 
@@ -1627,51 +1648,64 @@ In an English interview, I would answer it like this:
 #include <iostream>
 #include <optional>
 
-std::optional<int> findId(bool ok) { if (!ok) return std::nullopt; return 7; }
-int main() { if (auto id = findId(true)) std::cout << *id << '\n'; }
+std::optional<int> findId(bool ok) {
+    if (!ok) {
+        return std::nullopt;
+    }
+    return 7;
+}
+
+int main() {
+    if (auto id = findId(true)) {
+        std::cout << *id << '
+';
+    }
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- `std::nullopt` 明确表达“没有 id”
+- `if (auto id = ...)` 先检查是否有值，再解引用
+- 这里没有错误详情，所以 `optional<int>` 比 `-1` 这种特殊值更清楚
+- 如果需要说明为什么查找失败，就应该换成能携带错误信息的返回类型
+
 ---
 
 ## 27. `std::variant` 和继承多态怎么取舍？
 
 ### 核心答案
 
-- `variant` 适合候选类型集合固定的值语义场景
-- 继承多态适合运行时扩展和统一接口
-- 两者不是谁替代谁，而是扩展方向不同
+`std::variant` 适合候选类型集合固定的值语义场景；继承多态适合实现集合需要运行时扩展的场景。两者不是新旧替代关系，而是扩展方向不同。
 
 ### English explanation
 
 In an English interview, I would answer it like this:
 
-`std::variant` works well when the set of alternatives is closed, while virtual polymorphism works better when implementations need to be extended at runtime.
+`std::variant` works well when the set of alternatives is closed, while virtual polymorphism is better when new implementations need to be added without changing the original type.
 
 ### 错误回答示例
 
-- “`std::variant` 和继承多态怎么取舍？ 只是语法细节，不影响设计”
-- “只要能编译就说明用法正确”
-- “现代 C++ 特性一定总是更好”
+- “`variant` 是更现代的虚函数，应该替代继承”
+- “继承多态总是更慢，所以不用”
+- “`variant` 不需要处理所有分支”
 
 ### 面试官想听什么
 
-- 你是否能说清它解决的问题
-- 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道 `variant` 是封闭类型集合，虚函数是开放实现集合
+- 你是否理解 `visit` 要覆盖所有候选类型
+- 你是否能从 ABI、扩展性、值语义和性能角度取舍
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+如果消息、状态、AST 节点这类类型集合由本模块控制且变化不频繁，我会考虑 `variant`，因为值语义清楚、无需堆分配和虚表。如果实现需要第三方插件扩展，或运行时替换行为更重要，我会使用继承多态或类型擦除。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- `variant<A, B, C>` 的候选类型在编译期固定，新增类型要改定义和访问逻辑
+- 虚函数接口允许新增派生类，但接口本身要稳定
+- `variant` 通常把对象直接存储在自身内部，大小由最大候选类型决定
+- 继承多态常通过指针或引用访问对象，涉及所有权和动态分配设计
 
 ### 示例
 
@@ -1680,50 +1714,58 @@ In an English interview, I would answer it like this:
 #include <string>
 #include <variant>
 
-int main() { std::variant<int, std::string> v = "ok"; std::visit([](const auto& x) { std::cout << x << '\n'; }, v); }
+int main() {
+    std::variant<int, std::string> value = "ok";
+    std::visit([](const auto& x) {
+        std::cout << x << '
+';
+    }, value);
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- `variant<int, std::string>` 表示值只能是这两种类型之一
+- `std::visit` 根据当前实际候选类型调用 lambda
+- lambda 的 `auto` 参数让同一段访问逻辑适配多个候选类型
+- 如果不同类型行为差异很大，访问逻辑可能变复杂，这是 `variant` 的维护成本
+
 ---
 
 ## 28. erase-remove idiom 是什么？
 
 ### 核心答案
 
-- `std::remove` 只重排元素，不改变容器大小
-- 真正删除要再调用容器的 `erase`
-- C++20 可以使用 `std::erase` 简化
+erase-remove idiom 用 `std::remove` 先把保留元素前移，再用容器的 `erase` 真正删除尾部无效区间。关键点是：算法不改变容器大小，容器成员函数才负责删除元素。
 
 ### English explanation
 
 In an English interview, I would answer it like this:
 
-The erase-remove idiom removes elements from sequence containers by first moving kept elements forward and then erasing the tail.
+The erase-remove idiom first moves the elements to keep toward the front, then erases the remaining tail from the container.
 
 ### 错误回答示例
 
-- “erase-remove idiom 是什么？ 只是语法细节，不影响设计”
-- “只要能编译就说明用法正确”
-- “现代 C++ 特性一定总是更好”
+- “`std::remove` 会直接删除 vector 元素”
+- “调用 `remove` 后容器 size 会变小”
+- “erase-remove 对所有容器都一样推荐”
 
 ### 面试官想听什么
 
-- 你是否能说清它解决的问题
-- 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道算法不拥有容器，不能改变容器大小
+- 你是否能解释 `remove` 返回的新逻辑结尾
+- 你是否知道 C++20 的 `std::erase/std::erase_if`
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在维护旧代码或 C++17 代码时，我会熟练使用 erase-remove；如果项目能用 C++20，我更倾向 `std::erase` 或 `std::erase_if`，因为意图更直接，少写迭代器边界也更不容易出错。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- `std::remove` 是算法，只能重排 `[begin, end)` 范围内的元素
+- 它把要保留的元素前移，并返回新的逻辑结尾
+- `vector::erase` 才真正销毁尾部多余元素并缩小 size
+- 对关联容器，通常直接用成员 `erase` 或 C++20 `erase_if`
 
 ### 示例
 
@@ -1731,50 +1773,55 @@ The erase-remove idiom removes elements from sequence containers by first moving
 #include <algorithm>
 #include <vector>
 
-int main() { std::vector<int> v{1, 2, 3, 2}; v.erase(std::remove(v.begin(), v.end(), 2), v.end()); }
+int main() {
+    std::vector<int> values{1, 2, 3, 2};
+    values.erase(std::remove(values.begin(), values.end(), 2), values.end());
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- `std::remove` 把不等于 2 的元素前移
+- 返回值表示新的逻辑末尾
+- `erase(..., values.end())` 删除逻辑末尾之后的旧元素
+- 重点是区分“算法重排”和“容器删除”两个步骤
+
 ---
 
 ## 29. `unordered_map` rehash 和迭代器失效怎么理解？
 
 ### 核心答案
 
-- rehash 会重新分配桶
-- rehash 会使迭代器失效
-- 不要跨可能 rehash 的插入长期保存迭代器
+`unordered_map` rehash 会重建桶数组，通常会让所有迭代器失效。批量插入前合理 `reserve` 可以减少 rehash 次数，也能降低保存迭代器后继续插入的风险。
 
 ### English explanation
 
 In an English interview, I would answer it like this:
 
-Rehashing an `unordered_map` rebuilds buckets and invalidates iterators, so code should not keep iterators across insertions that may rehash.
+Rehashing rebuilds the bucket array of an `unordered_map` and invalidates iterators, so code should not keep iterators across insertions that may trigger rehash.
 
 ### 错误回答示例
 
-- “`unordered_map` rehash 和迭代器失效怎么理解？ 只是语法细节，不影响设计”
-- “只要能编译就说明用法正确”
-- “现代 C++ 特性一定总是更好”
+- “`unordered_map` 插入永远不会影响已有迭代器”
+- “调用 `reserve` 只是性能优化，不影响正确性”
+- “rehash 只改变内部顺序，外部不用关心”
 
 ### 面试官想听什么
 
-- 你是否能说清它解决的问题
-- 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道 rehash 会重建桶数组并使迭代器失效
+- 你是否会在批量插入前使用 `reserve`
+- 你是否区分 iterator、reference、pointer 的失效规则
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+批量构建哈希表时，我会提前 `reserve`，既减少 rehash 成本，也避免循环中长期保存迭代器后又插入导致失效。代码审查时看到“保存 iterator 后继续 emplace”会特别留意。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- `unordered_map` 按桶组织元素，负载因子过高时可能 rehash
+- rehash 会让所有迭代器失效，因为桶结构被重建
+- `reserve(n)` 根据元素数量预留桶，`rehash(n)` 直接请求桶数量
+- 即使引用/指针在某些操作下仍有效，也不应把它和迭代器规则混淆
 
 ### 示例
 
@@ -1782,23 +1829,27 @@ Rehashing an `unordered_map` rebuilds buckets and invalidates iterators, so code
 #include <string>
 #include <unordered_map>
 
-int main() { std::unordered_map<int, std::string> m; m.reserve(100); m.emplace(1, "one"); }
+int main() {
+    std::unordered_map<int, std::string> table;
+    table.reserve(100);
+    table.emplace(1, "one");
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- `reserve(100)` 表示预计要存 100 个元素
+- 这样后续插入更不容易触发 rehash
+- `emplace` 可能构造新元素，也可能在容量压力下触发 rehash
+- 面试回答要把性能和迭代器失效两个维度都说清
+
 ---
 
 ## 30. lambda 捕获值和引用有什么生命周期陷阱？
 
 ### 核心答案
 
-- 值捕获保存副本
-- 引用捕获引用外部对象
-- 异步执行或延迟执行时引用捕获容易悬垂
+值捕获保存副本，引用捕获保存外部对象引用。异步、延迟执行、线程池和回调列表中，引用捕获或 `[this]` 很容易在原对象销毁后变成悬垂引用。
 
 ### English explanation
 
@@ -1808,7 +1859,7 @@ Value capture copies state into the lambda, while reference capture refers to ex
 
 ### 错误回答示例
 
-- “lambda 捕获值和引用有什么生命周期陷阱？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -1816,40 +1867,48 @@ Value capture copies state into the lambda, while reference capture refers to ex
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
 ```cpp
 #include <functional>
 
-std::function<int()> makeCounter() { int value = 1; return [value] { return value; }; }
-int main() { return makeCounter()(); }
+std::function<int()> makeCounter() {
+    int value = 1;
+    return [value] { return value; };
+}
+
+int main() {
+    return makeCounter()();
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 31. `std::bind` 和 lambda 怎么取舍？
 
 ### 核心答案
 
-- lambda 通常更直观、更可读
-- `bind` 能做参数绑定，但占位符可读性较差
-- 现代 C++ 中优先考虑 lambda
+现代 C++ 中通常优先 lambda，因为捕获、参数和调用逻辑都更显式。`std::bind` 主要出现在旧代码或简单适配场景，复杂占位符会明显降低可读性。
 
 ### English explanation
 
@@ -1859,7 +1918,7 @@ Lambdas are usually clearer than `std::bind` because captures and parameters are
 
 ### 错误回答示例
 
-- “`std::bind` 和 lambda 怎么取舍？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -1867,50 +1926,58 @@ Lambdas are usually clearer than `std::bind` because captures and parameters are
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
 ```cpp
 #include <iostream>
 
-void print(int base, int value) { std::cout << base + value << '\n'; }
-int main() { auto f = [](int value) { print(10, value); }; f(5); }
+void print(int base, int value) {
+    std::cout << base + value << '\n';
+}
+
+int main() {
+    auto f = [](int value) { print(10, value); };
+    f(5);
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 32. `std::function` 的类型擦除成本是什么？
 
 ### 核心答案
 
-- `std::function` 可以保存不同 callable
-- 它通过类型擦除统一接口
-- 可能带来间接调用和小对象优化之外的分配成本
+`std::function` 通过类型擦除统一保存不同 callable，代价可能是间接调用、无法内联和小对象优化之外的动态分配。它适合运行时保存异构回调，不是模板的零成本替代品。
 
 ### English explanation
 
 In an English interview, I would answer it like this:
 
-`std::function` type-erases callable objects, which improves flexibility but may add indirect-call overhead and sometimes allocation.
+`std::function` type-erases callable objects. It improves flexibility but can add indirect-call overhead and sometimes allocation.
 
 ### 错误回答示例
 
-- “`std::function` 的类型擦除成本是什么？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -1918,16 +1985,18 @@ In an English interview, I would answer it like this:
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
@@ -1935,23 +2004,26 @@ In an English interview, I would answer it like this:
 #include <functional>
 #include <iostream>
 
-int main() { std::function<int(int)> f = [](int x) { return x + 1; }; std::cout << f(1) << '\n'; }
+int main() {
+    std::function<int(int)> f = [](int x) { return x + 1; };
+    std::cout << f(1) << '\n';
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 33. `shared_ptr` 控制块和 aliasing constructor 是什么？
 
 ### 核心答案
 
-- 控制块保存引用计数和删除器等共享状态
-- 多个 `shared_ptr` 可共享同一个控制块
-- aliasing constructor 可共享所有权但指向另一个地址
+`shared_ptr` 控制块保存引用计数、删除器和分配器等所有权元数据。aliasing constructor 可以共享一个对象的控制块，但让 `shared_ptr` 的 `get()` 指向另一个子对象地址。
 
 ### English explanation
 
@@ -1961,7 +2033,7 @@ A `shared_ptr` control block stores ownership metadata. The aliasing constructor
 
 ### 错误回答示例
 
-- “`shared_ptr` 控制块和 aliasing constructor 是什么？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -1969,16 +2041,18 @@ A `shared_ptr` control block stores ownership metadata. The aliasing constructor
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
@@ -1986,23 +2060,26 @@ A `shared_ptr` control block stores ownership metadata. The aliasing constructor
 #include <memory>
 #include <vector>
 
-int main() { auto owner = std::make_shared<std::vector<int>>(3, 1); std::shared_ptr<int> first(owner, owner->data()); }
+int main() {
+    auto owner = std::make_shared<std::vector<int>>(3, 1);
+    std::shared_ptr<int> first(owner, owner->data());
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 34. `enable_shared_from_this` 为什么存在？
 
 ### 核心答案
 
-- 对象需要从成员函数安全获得管理自己的 `shared_ptr`
-- 直接 `shared_ptr<T>(this)` 会创建第二个控制块
-- 对象必须已经由 `shared_ptr` 管理
+`enable_shared_from_this` 让对象在成员函数中安全获得共享同一控制块的 `shared_ptr`。它避免 `shared_ptr<T>(this)` 创建第二个控制块导致重复释放。
 
 ### English explanation
 
@@ -2012,7 +2089,7 @@ In an English interview, I would answer it like this:
 
 ### 错误回答示例
 
-- “`enable_shared_from_this` 为什么存在？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -2020,40 +2097,48 @@ In an English interview, I would answer it like this:
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
 ```cpp
 #include <memory>
 
-struct Session : std::enable_shared_from_this<Session> { std::shared_ptr<Session> self() { return shared_from_this(); } };
-int main() { auto s = std::make_shared<Session>(); auto again = s->self(); }
+struct Session : std::enable_shared_from_this<Session> {
+    std::shared_ptr<Session> self() { return shared_from_this(); }
+};
+
+int main() {
+    auto s = std::make_shared<Session>();
+    auto again = s->self();
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 35. `weak_ptr::lock()` 的正确用法是什么？
 
 ### 核心答案
 
-- `weak_ptr` 不拥有对象
-- `lock()` 尝试获得 `shared_ptr`
-- 返回空 `shared_ptr` 表示对象已经销毁
+`weak_ptr::lock()` 会尝试把非拥有观察者提升成临时 `shared_ptr`。使用前必须检查返回值，成功后才能在这个局部强引用生命周期内安全访问对象。
 
 ### English explanation
 
@@ -2063,7 +2148,7 @@ In an English interview, I would answer it like this:
 
 ### 错误回答示例
 
-- “`weak_ptr::lock()` 的正确用法是什么？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -2071,16 +2156,18 @@ In an English interview, I would answer it like this:
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
@@ -2088,23 +2175,32 @@ In an English interview, I would answer it like this:
 #include <iostream>
 #include <memory>
 
-int main() { std::weak_ptr<int> w; { auto p = std::make_shared<int>(42); w = p; } if (auto p = w.lock()) std::cout << *p << '\n'; }
+int main() {
+    std::weak_ptr<int> weak;
+    {
+        auto strong = std::make_shared<int>(42);
+        weak = strong;
+    }
+    if (auto locked = weak.lock()) {
+        std::cout << *locked << '\n';
+    }
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 36. `condition_variable` 为什么要配合谓词？
 
 ### 核心答案
 
-- 线程可能被虚假唤醒
-- 谓词用于重新检查条件是否真的成立
-- 推荐使用 `wait(lock, pred)` 形式
+条件变量可能虚假唤醒，也可能被通知后发现条件已被其他线程消费。谓词才是业务条件，推荐使用 `wait(lock, pred)` 在持锁状态下循环检查。
 
 ### English explanation
 
@@ -2114,7 +2210,7 @@ A condition variable should be used with a predicate because wakeups can be spur
 
 ### 错误回答示例
 
-- “`condition_variable` 为什么要配合谓词？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -2122,16 +2218,18 @@ A condition variable should be used with a predicate because wakeups can be spur
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
@@ -2139,25 +2237,32 @@ A condition variable should be used with a predicate because wakeups can be spur
 #include <condition_variable>
 #include <mutex>
 
-std::mutex m; std::condition_variable cv; bool ready = false;
-void waitReady() { std::unique_lock<std::mutex> lock(m); cv.wait(lock, [] { return ready; }); }
+std::mutex m;
+std::condition_variable cv;
+bool ready = false;
+
+void waitReady() {
+    std::unique_lock<std::mutex> lock(m);
+    cv.wait(lock, [] { return ready; });
+}
+
 int main() {}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 37. `std::promise` 和 `std::packaged_task` 是什么？
 
 ### 核心答案
 
-- `promise` 手动设置异步结果
-- `future` 读取这个结果
-- `packaged_task` 把可调用对象包装成会产生 future 的任务
+`promise` 手动向 `future` 对应的 shared state 写入结果；`packaged_task` 把 callable 包装成会把返回值或异常写入 `future` 的任务。它们本身不负责创建线程。
 
 ### English explanation
 
@@ -2167,7 +2272,7 @@ In an English interview, I would answer it like this:
 
 ### 错误回答示例
 
-- “`std::promise` 和 `std::packaged_task` 是什么？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -2175,16 +2280,18 @@ In an English interview, I would answer it like this:
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
@@ -2192,23 +2299,28 @@ In an English interview, I would answer it like this:
 #include <future>
 #include <iostream>
 
-int main() { std::packaged_task<int()> task([] { return 42; }); auto fut = task.get_future(); task(); std::cout << fut.get() << '\n'; }
+int main() {
+    std::packaged_task<int()> task([] { return 42; });
+    auto fut = task.get_future();
+    task();
+    std::cout << fut.get() << '\n';
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 38. `shared_mutex` 和读写锁适合什么场景？
 
 ### 核心答案
 
-- 读多写少时可允许多个读者并发
-- 写者需要独占访问
-- 读写锁不一定总比普通 mutex 快
+`shared_mutex` 允许多个读者并发或一个写者独占，适合读多写少且读临界区有一定成本的场景。它不一定比 `mutex` 快，写多或临界区很短时可能更差。
 
 ### English explanation
 
@@ -2218,7 +2330,7 @@ In an English interview, I would answer it like this:
 
 ### 错误回答示例
 
-- “`shared_mutex` 和读写锁适合什么场景？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -2226,16 +2338,18 @@ In an English interview, I would answer it like this:
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
@@ -2243,26 +2357,36 @@ In an English interview, I would answer it like this:
 #include <mutex>
 #include <shared_mutex>
 
-std::shared_mutex m; int value = 0;
-int read() { std::shared_lock lock(m); return value; }
-void write(int v) { std::unique_lock lock(m); value = v; }
+std::shared_mutex m;
+int value = 0;
+
+int read() {
+    std::shared_lock lock(m);
+    return value;
+}
+
+void write(int v) {
+    std::unique_lock lock(m);
+    value = v;
+}
+
 int main() {}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 39. `thread_local` 的使用场景是什么？
 
 ### 核心答案
 
-- `thread_local` 让每个线程拥有独立对象实例
-- 适合线程私有缓存、统计或上下文
-- 要注意对象构造析构时机
+`thread_local` 让每个线程拥有变量的独立实例，适合线程私有缓存、统计、随机数生成器或上下文。它不是跨线程共享工具，要注意线程池复用和析构时机。
 
 ### English explanation
 
@@ -2272,7 +2396,7 @@ In an English interview, I would answer it like this:
 
 ### 错误回答示例
 
-- “`thread_local` 的使用场景是什么？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -2280,31 +2404,41 @@ In an English interview, I would answer it like this:
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
 ```cpp
 #include <iostream>
 
-int next() { thread_local int counter = 0; return ++counter; }
-int main() { std::cout << next() << ' ' << next() << '\n'; }
+int next() {
+    thread_local int counter = 0;
+    return ++counter;
+}
+
+int main() {
+    std::cout << next() << ' ' << next() << '\n';
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 40. `noexcept` 对 move 和容器有什么影响？
@@ -2314,6 +2448,7 @@ int main() { std::cout << next() << ' ' << next() << '\n'; }
 - `noexcept` 表达函数不抛异常
 - 容器扩容时更愿意使用 `noexcept` move
 - 错误标注 `noexcept` 会导致异常时终止程序
+- 它既是优化信息，也是接口契约，不能为了性能随便加
 
 ### English explanation
 
@@ -2323,48 +2458,62 @@ In an English interview, I would answer it like this:
 
 ### 错误回答示例
 
-- “`noexcept` 对 move 和容器有什么影响？ 只是语法细节，不影响设计”
-- “只要能编译就说明用法正确”
-- “现代 C++ 特性一定总是更好”
+- “`noexcept` 只是让代码更快，随便加没问题”
+- “移动构造有没有 `noexcept` 对容器没影响”
+- “函数标了 `noexcept` 后里面的异常会自动被吞掉”
 
 ### 面试官想听什么
 
-- 你是否能说清它解决的问题
-- 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道 `vector` 扩容时要在强异常安全和移动效率之间取舍
+- 你是否理解 `noexcept` 是承诺，不是 try/catch
+- 你是否知道错误的 `noexcept` 会触发 `std::terminate`
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+我会给真正不会抛的移动构造、移动赋值、swap 和清理函数标 `noexcept`，让容器和泛型代码可以做更好的选择。但如果函数内部会分配内存、调用未知回调或依赖可能抛异常的成员，我不会为了“优化”硬标 `noexcept`。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- `std::vector` 扩容时要把旧元素搬到新存储；如果 move 可能抛，容器为了维持异常保证可能选择 copy
+- 如果类型不可拷贝且 move 可能抛，容器实现能选择的安全路径会变少
+- `noexcept` 表达“异常不会逃出函数”，一旦异常逃出会直接终止程序
+- 标准库 traits 如 `std::is_nothrow_move_constructible_v<T>` 会读取这个契约
 
 ### 示例
 
 ```cpp
+#include <iostream>
+#include <type_traits>
 #include <vector>
 
-struct Item { Item() = default; Item(Item&&) noexcept = default; };
-int main() { std::vector<Item> items; items.emplace_back(); }
+struct Item {
+    Item() = default;
+    Item(const Item&) = default;
+    Item(Item&&) noexcept = default;
+};
+
+int main() {
+    static_assert(std::is_nothrow_move_constructible_v<Item>);
+
+    std::vector<Item> items;
+    items.emplace_back();
+    items.emplace_back();
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- `Item(Item&&) noexcept = default;` 明确移动构造不会抛异常
+- `is_nothrow_move_constructible_v<Item>` 让泛型代码能在编译期看到这个性质
+- `vector` 扩容时更容易选择移动旧元素，从而减少拷贝成本
+- 前提是这个承诺真实可靠；如果移动过程可能分配或调用可抛代码，就不应硬标 `noexcept`
 ---
 
 ## 41. `constexpr`、`consteval`、`constinit` 基础区别是什么？
 
 ### 核心答案
 
-- `constexpr` 允许在满足条件时编译期求值
-- `consteval` 要求函数必须编译期求值
-- `constinit` 保证变量静态初始化但不表示常量
+`constexpr` 允许在满足条件时编译期求值，`consteval` 要求每次调用都必须编译期求值，`constinit` 保证静态或线程存储期变量做静态初始化但不表示只读。
 
 ### English explanation
 
@@ -2374,7 +2523,7 @@ In an English interview, I would answer it like this:
 
 ### 错误回答示例
 
-- “`constexpr`、`consteval`、`constinit` 基础区别是什么？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -2382,16 +2531,18 @@ In an English interview, I would answer it like this:
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
@@ -2399,33 +2550,37 @@ In an English interview, I would answer it like this:
 #include <iostream>
 
 constexpr int square(int x) { return x * x; }
-int main() { constexpr int v = square(4); std::cout << v << '\n'; }
+
+int main() {
+    constexpr int v = square(4);
+    std::cout << v << '\n';
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 42. `std::span`（C++20）作为非拥有连续视图怎么用？
 
 ### 核心答案
 
-- `span` 不拥有元素
-- 它表示一段连续内存
-- 适合统一接收数组、vector、array
+`std::span<T>` 是非拥有连续内存视图，统一表达数组、`std::array`、`std::vector` 等连续序列参数。它不延长底层数据生命周期，也不适合非连续容器。
 
 ### English explanation
 
 In an English interview, I would answer it like this:
 
-`std::span` is a non-owning view over contiguous elements. It is useful for APIs that do not need ownership.
+`std::span` is a non-owning view over contiguous elements. It is useful for APIs that need access but not ownership.
 
 ### 错误回答示例
 
-- “`std::span` 作为非拥有连续视图怎么用？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -2433,16 +2588,18 @@ In an English interview, I would answer it like this:
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
@@ -2451,24 +2608,32 @@ In an English interview, I would answer it like this:
 #include <span>
 #include <vector>
 
-void print(std::span<const int> values) { for (int v : values) std::cout << v << ' '; }
-int main() { std::vector<int> v{1, 2, 3}; print(v); }
+void print(std::span<const int> values) {
+    for (int v : values) {
+        std::cout << v << ' ';
+    }
+}
+
+int main() {
+    std::vector<int> v{1, 2, 3};
+    print(v);
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 43. `ranges`（C++20）的基本价值是什么？
 
 ### 核心答案
 
-- ranges 让算法直接接受 range
-- view 支持惰性组合
-- 代码可读性更接近数据处理管道
+ranges 让算法直接操作 range，并通过 views 组合惰性数据处理管道。它提升表达力并减少 begin/end 样板，但 view 的生命周期和过长管道的可读性仍要谨慎。
 
 ### English explanation
 
@@ -2478,7 +2643,7 @@ C++20 ranges make algorithms and views compose more naturally, often reducing te
 
 ### 错误回答示例
 
-- “`ranges` 的基本价值是什么？ 只是语法细节，不影响设计”
+- “只背 API 名字，不说明生命周期、所有权或工程边界”
 - “只要能编译就说明用法正确”
 - “现代 C++ 特性一定总是更好”
 
@@ -2486,16 +2651,18 @@ C++20 ranges make algorithms and views compose more naturally, often reducing te
 
 - 你是否能说清它解决的问题
 - 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道现代写法的适用边界
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+在工程里我会先看它是否让接口语义、生命周期或错误边界更清楚，再看它是否降低重复和运行时成本；不会为了显得现代而牺牲可读性和可维护性。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 这类工具的价值通常来自更准确地表达所有权、生命周期、约束或数据流
+- 使用前要确认调用方是否需要拥有、共享、保存或异步使用数据
+- 性能收益要结合真实路径评估，不能只按 API 新旧判断
+- 面试回答要同时讲出适用场景和不适用场景
 
 ### 示例
 
@@ -2504,14 +2671,21 @@ C++20 ranges make algorithms and views compose more naturally, often reducing te
 #include <ranges>
 #include <vector>
 
-int main() { std::vector<int> v{1, 2, 3, 4}; for (int x : v | std::views::filter([](int n) { return n % 2 == 0; })) std::cout << x << '\n'; }
+int main() {
+    std::vector<int> v{1, 2, 3, 4};
+    for (int x : v | std::views::filter([](int n) { return n % 2 == 0; })) {
+        std::cout << x << '\n';
+    }
+}
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- 示例展示了该工具的核心用法
+- 重点是它表达的接口语义，而不是 API 名字本身
+- 面试时要把示例和具体风险联系起来，而不是只背语法
+- 能说清边界比单纯背语法更重要
+
 ---
 
 ## 44. Pimpl idiom 解决什么工程问题？
@@ -2521,6 +2695,7 @@ int main() { std::vector<int> v{1, 2, 3, 4}; for (int x : v | std::views::filter
 - Pimpl 把实现细节隐藏到指针后面
 - 可以减少头文件依赖和重新编译范围
 - 代价是间接访问和额外分配
+- 它常用于稳定 ABI、降低编译依赖和保护实现细节
 
 ### English explanation
 
@@ -2530,38 +2705,55 @@ The Pimpl idiom hides implementation details behind a pointer, reducing compile-
 
 ### 错误回答示例
 
-- “Pimpl idiom 解决什么工程问题？ 只是语法细节，不影响设计”
-- “只要能编译就说明用法正确”
-- “现代 C++ 特性一定总是更好”
+- “Pimpl 只是为了少 include 几个头文件”
+- “所有类都应该 Pimpl”
+- “Pimpl 没有运行时成本”
 
 ### 面试官想听什么
 
-- 你是否能说清它解决的问题
-- 你是否能讲出生命周期、所有权或性能边界
+- 你是否知道 Pimpl 解决的是编译依赖、实现隐藏和 ABI 边界
+- 你是否理解它通常用 `unique_ptr<Impl>` 表达独占实现对象
+- 你是否能说出代价：一次间接访问、动态分配、特殊成员函数位置要求
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+我会在公共 SDK、动态库接口、编译依赖很重的头文件里考虑 Pimpl。普通小型业务类如果没有 ABI 或编译时间压力，我不会机械使用，因为它会增加 indirection、分配和实现复杂度。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- Pimpl 让头文件只暴露稳定外壳，真正成员放到 `.cpp` 中的 `Impl` 结构
+- 改动 `Impl` 成员时，依赖头文件的调用方通常不需要重新编译
+- `std::unique_ptr<Impl>` 要求析构函数通常在 `.cpp` 中定义，因为那里能看到完整的 `Impl`
+- 如果对象极多、访问极频繁，Pimpl 的分配和间接访问成本需要评估
 
 ### 示例
 
 ```cpp
 #include <memory>
 
-class Widget { public: Widget(); ~Widget(); private: struct Impl; std::unique_ptr<Impl> impl_; };
+class Widget {
+public:
+    Widget();
+    ~Widget();
+
+    Widget(Widget&&) noexcept;
+    Widget& operator=(Widget&&) noexcept;
+
+    Widget(const Widget&) = delete;
+    Widget& operator=(const Widget&) = delete;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- `struct Impl;` 是前置声明，头文件不暴露真实成员
+- `std::unique_ptr<Impl>` 表示 `Widget` 独占实现对象
+- 析构函数声明在头文件，定义通常放到 `.cpp`，因为销毁 `unique_ptr<Impl>` 需要完整类型
+- 删除拷贝、保留移动是常见选择，避免不清晰的深拷贝语义
 ---
 
 ## 45. 如何控制编译依赖和头文件污染？
@@ -2571,6 +2763,7 @@ class Widget { public: Widget(); ~Widget(); private: struct Impl; std::unique_pt
 - 头文件只包含必要依赖
 - 能前置声明就不强行 include
 - 避免在头文件里写 `using namespace`
+- 公共头文件是依赖传播边界，写得越重，整个项目编译和耦合成本越高
 
 ### English explanation
 
@@ -2580,24 +2773,26 @@ Compile dependencies can be controlled by keeping headers minimal, using forward
 
 ### 错误回答示例
 
-- “如何控制编译依赖和头文件污染？ 只是语法细节，不影响设计”
-- “只要能编译就说明用法正确”
-- “现代 C++ 特性一定总是更好”
+- “头文件 include 多一点没关系，反正能编译”
+- “公共头文件里 `using namespace std;` 更方便”
+- “前置声明总是能替代 include”
 
 ### 面试官想听什么
 
-- 你是否能说清它解决的问题
-- 你是否能讲出生命周期、所有权或性能边界
+- 你是否理解头文件会被文本包含并传播依赖
+- 你是否知道什么时候能前置声明，什么时候必须 include 完整定义
+- 你是否能从模块边界、编译时间和命名空间污染角度说明工程取舍
 
 ### 项目里怎么说
 
-在工程里我会先看这个特性是否让接口语义更清楚，再看它是否降低错误概率，而不是为了显得现代而使用。
+我会把公共头文件当成稳定契约来写：只暴露必要类型和函数签名，把重实现依赖放到 `.cpp`。如果头文件被很多模块包含，任何多余 include、宏或 `using namespace` 都会放大成全项目的编译和维护成本。
 
 ### 深入解释
 
-- 面试回答要先给结论，再讲边界
-- 多数现代 C++ 工具都在表达所有权、生命周期、约束或错误处理
-- 真正的取舍通常来自可读性、编译依赖、运行时成本和维护成本
+- 指针和引用成员/参数通常可以只前置声明类型
+- 按值成员、继承基类、访问成员函数、`sizeof(T)` 等场景需要完整定义
+- 头文件中的宏、全局 using、重 include 会污染所有包含者
+- Pimpl、接口拆分、include-what-you-use 和 C++20 modules 都是控制依赖的不同工具
 
 ### 示例
 
@@ -2606,14 +2801,23 @@ Compile dependencies can be controlled by keeping headers minimal, using forward
 #include <memory>
 
 class Engine; // 前置声明
-class Car { public: explicit Car(std::unique_ptr<Engine> engine); private: std::unique_ptr<Engine> engine_; };
+
+class Car {
+public:
+    explicit Car(std::unique_ptr<Engine> engine);
+    ~Car();
+
+private:
+    std::unique_ptr<Engine> engine_;
+};
 ```
 
 ### 代码讲解
 
-- 示例展示的是最小用法
-- 重点不是 API 名字，而是它表达的语义
-- 实际项目中还要结合生命周期和错误处理边界
+- `class Engine;` 足够声明 `std::unique_ptr<Engine>` 成员，但析构定义通常要放到看到完整 `Engine` 的 `.cpp`
+- 头文件只 include `<memory>`，不需要把 `Engine` 的完整头文件传播给所有 `Car` 使用者
+- 不在头文件写 `using namespace`，避免污染包含者作用域
+- 这个例子展示的是“接口依赖最小化”，不是为了少写 include 而牺牲正确性
 
 ---
 

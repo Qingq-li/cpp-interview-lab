@@ -184,6 +184,15 @@ CPP_LAB_EXTENSIONS = {
     ".md",
 }
 CPP_LAB_SOURCE_EXTENSIONS = {".cpp", ".cc", ".cxx"}
+CPP_LAB_NEW_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+CPP_LAB_STANDARDS = ("c++11", "c++14", "c++17", "c++20")
+CPP_LAB_DEFAULT_STANDARD = "c++17"
+CPP_LAB_STANDARD_FLAGS = {
+    "c++11": "c++11",
+    "c++14": "c++14",
+    "c++17": "c++17",
+    "c++20": "c++2a",
+}
 CODE_PROJECT_EXCLUDED_DIRS = {
     ".git",
     "__pycache__",
@@ -246,6 +255,7 @@ PWA_ICON_180_PATH = "/_static/pwa-icon-180.png"
 PWA_ICON_512_PATH = "/_static/pwa-icon-512.png"
 PWA_MANIFEST_PATH = "/manifest.webmanifest"
 PWA_SERVICE_WORKER_PATH = "/_static/sw.js"
+STATIC_ASSET_VERSION = "20260505-clean-card-tags"
 
 
 def _png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -397,14 +407,14 @@ def build_service_worker_js() -> str:
     precache = [
         "/",
         "/_static/app.css",
-        "/_static/app.js",
+        f"/_static/app.js?v={STATIC_ASSET_VERSION}",
         PWA_MANIFEST_PATH,
         PWA_ICON_180_PATH,
         PWA_ICON_512_PATH,
     ]
     precache_json = json.dumps(precache, ensure_ascii=False)
     return f"""
-const CACHE_NAME = 'flashcards-pwa-v1';
+const CACHE_NAME = 'flashcards-pwa-v6-clean-card-tags';
 const PRECACHE_URLS = {precache_json};
 
 self.addEventListener('install', (event) => {{
@@ -1223,19 +1233,20 @@ a:hover {
 
 .cpp-lab-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex-wrap: nowrap;
+  gap: 8px;
   align-items: center;
   justify-content: space-between;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 250, 243, 0.68);
+  overflow-x: auto;
 }
 
 .cpp-lab-file-select {
   min-height: 40px;
-  min-width: min(100%, 320px);
+  width: clamp(220px, 28vw, 340px);
   border: 1px solid rgba(81, 67, 57, 0.16);
   border-radius: 8px;
   padding: 0 12px;
@@ -1246,11 +1257,45 @@ a:hover {
   font-size: 13px;
 }
 
-.cpp-lab-actions {
+.cpp-lab-file-controls {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   align-items: center;
+  min-width: max-content;
+}
+
+.cpp-lab-new-file {
+  min-height: 40px;
+  width: 180px;
+  border: 1px solid rgba(81, 67, 57, 0.16);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fffdf8;
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.cpp-lab-standard-select {
+  min-height: 40px;
+  border: 1px solid rgba(81, 67, 57, 0.16);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: #fffdf8;
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.cpp-lab-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  align-items: center;
+  min-width: max-content;
 }
 
 .cpp-lab-shortcuts {
@@ -1258,6 +1303,7 @@ a:hover {
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .cpp-lab-status {
@@ -2537,9 +2583,30 @@ function getBootPersistentState() {
   };
 }
 
+function mergeSavedCards(left, right) {
+  const merged = [];
+  [left, right].forEach((entries) => {
+    if (!Array.isArray(entries)) {
+      return;
+    }
+    entries.forEach((entry) => {
+      const key = String(entry || '');
+      if (key && !merged.includes(key)) {
+        merged.push(key);
+      }
+    });
+  });
+  return merged;
+}
+
 function hydratePersistentStateFromBoot() {
   const persistentState = getBootPersistentState();
-  localStorage.setItem(getStoreKey('saved'), JSON.stringify(persistentState.saved_cards || []));
+  const currentSaved = getSavedCards();
+  const mergedSaved = mergeSavedCards(currentSaved, persistentState.saved_cards || []);
+  localStorage.setItem(getStoreKey('saved'), JSON.stringify(mergedSaved));
+  if (mergedSaved.length !== (persistentState.saved_cards || []).length) {
+    syncPersistentState('saved_cards', { savedCards: mergedSaved });
+  }
   Object.entries(persistentState.notebooks || {}).forEach(([slug, state]) => {
     localStorage.setItem(getStoreKey(`notebook:${slug}`), JSON.stringify(state));
   });
@@ -2565,7 +2632,12 @@ async function refreshPersistentStateFromServer() {
   const notes = snapshot.notes && typeof snapshot.notes === 'object' ? snapshot.notes : {};
   const homeNotes = snapshot.home_notes && typeof snapshot.home_notes === 'object' ? snapshot.home_notes : {};
 
-  localStorage.setItem(getStoreKey('saved'), JSON.stringify(savedCards));
+  const currentSaved = getSavedCards();
+  const mergedSaved = mergeSavedCards(currentSaved, savedCards);
+  localStorage.setItem(getStoreKey('saved'), JSON.stringify(mergedSaved));
+  if (mergedSaved.length !== savedCards.length) {
+    syncPersistentState('saved_cards', { savedCards: mergedSaved });
+  }
 
   Object.keys(localStorage).forEach((key) => {
     if (
@@ -2813,6 +2885,7 @@ function syncPersistentState(kind, payload) {
   fetch('/_api/state', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    keepalive: true,
     body: JSON.stringify({ kind, ...payload }),
   }).catch(() => {});
 }
@@ -2823,6 +2896,18 @@ function cardKey(notebookSlug, cardId) {
 
 function isCardSaved(notebookSlug, cardId) {
   return getSavedCards().includes(cardKey(notebookSlug, cardId));
+}
+
+function saveCardIfNeeded(notebookSlug, cardId) {
+  const key = cardKey(notebookSlug, cardId);
+  const saved = getSavedCards();
+  if (saved.includes(key)) {
+    return false;
+  }
+
+  saved.unshift(key);
+  saveSavedCards(saved);
+  return true;
 }
 
 function toggleCardSaved(notebookSlug, cardId) {
@@ -3020,7 +3105,7 @@ function bindCardPage() {
 
   if (saveButton) {
     saveButton.addEventListener('click', () => {
-      toggleCardSaved(notebookSlug, cardId);
+      saveCardIfNeeded(notebookSlug, cardId);
       syncSaveButton();
       updateQuestionGrid(notebookSlug);
     });
@@ -3927,7 +4012,7 @@ function bindCppLab() {
       setStatus(error && error.message ? error.message : 'Run failed.');
     } finally {
       runButton.disabled = false;
-      runButton.textContent = 'Run Alt+C';
+      runButton.textContent = 'Run';
     }
   };
 
@@ -4009,6 +4094,9 @@ function bindCppLab() {
   const outputPane = root.querySelector('[data-cpp-lab-output-pane]');
   const editorThemeButton = root.querySelector('[data-cpp-lab-editor-theme]');
   const outputThemeButton = root.querySelector('[data-cpp-lab-output-theme]');
+  const newFileInput = root.querySelector('[data-cpp-lab-new-file-name]');
+  const newFileButton = root.querySelector('[data-cpp-lab-new-file]');
+  const standardSelect = root.querySelector('[data-cpp-lab-standard]');
   const dirtyFiles = {};
   let activePath = fileSelect ? fileSelect.value : '';
   let editorView = null;
@@ -4137,6 +4225,56 @@ function bindCppLab() {
     return result;
   };
 
+  const ensureFileOption = (path) => {
+    if (!fileSelect || !path) {
+      return;
+    }
+    const exists = Array.from(fileSelect.options).some((option) => option.value === path);
+    if (!exists) {
+      const option = document.createElement('option');
+      option.value = path;
+      option.textContent = path;
+      fileSelect.appendChild(option);
+    }
+    fileSelect.value = path;
+  };
+
+  const createNewFile = async () => {
+    if (!newFileButton || !newFileInput || !editorView) {
+      return;
+    }
+    const requestedPath = String(newFileInput.value || '').trim();
+    if (!requestedPath) {
+      setStatus('Enter a file name first.');
+      newFileInput.focus();
+      return;
+    }
+    newFileButton.disabled = true;
+    try {
+      const response = await fetch('/_api/cpp-lab/new-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: requestedPath }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || 'Failed to create file.');
+      }
+      ensureFileOption(result.path);
+      activePath = result.path;
+      setEditorValue(result.content || '');
+      markDirty(activePath, false);
+      newFileInput.value = '';
+      setStatus(`Created ${activePath}.`);
+      editorView.focus();
+    } catch (error) {
+      setStatus(error && error.message ? error.message : 'Create file failed.');
+      newFileInput.focus();
+    } finally {
+      newFileButton.disabled = false;
+    }
+  };
+
   const loadFile = async (path) => {
     if (!path || !editorView) {
       return;
@@ -4200,7 +4338,11 @@ function bindCppLab() {
       const response = await fetch('/_api/cpp-lab/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files, runnable_path: activePath || '' }),
+        body: JSON.stringify({
+          files,
+          runnable_path: activePath || '',
+          standard: standardSelect ? standardSelect.value : 'c++17',
+        }),
       });
       const result = await response.json();
       if (!response.ok && result.error) {
@@ -4219,7 +4361,7 @@ function bindCppLab() {
       setStatus(error && error.message ? error.message : 'Run failed.');
     } finally {
       runButton.disabled = false;
-      runButton.textContent = 'Run Alt+C';
+      runButton.textContent = 'Run';
     }
   };
 
@@ -4332,6 +4474,19 @@ function bindCppLab() {
 
   if (saveButton) {
     saveButton.addEventListener('click', saveActiveFile);
+  }
+
+  if (newFileButton) {
+    newFileButton.addEventListener('click', createNewFile);
+  }
+
+  if (newFileInput) {
+    newFileInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        createNewFile();
+      }
+    });
   }
 
   if (runButton) {
@@ -4858,9 +5013,6 @@ function bindSavedPage() {
             </div>
             <h3>${escapeHtml(card.title)}</h3>
             <p class="card-preview">${escapeHtml(card.preview)}</p>
-            <div class="tag-row">
-              ${card.labels.map((label) => `<span class="tag">${escapeHtml(label)}</span>`).join('')}
-            </div>
             <div class="reveal-actions">
               <a class="button" href="${escapeHtml(card.url)}">Open</a>
               <button class="button-secondary" type="button" data-unsave-button data-key="${escapeHtml(entry.key)}">Remove</button>
@@ -5582,9 +5734,6 @@ function bindNotesPage() {
             </div>
             <h3>${escapeHtml(card.title)}</h3>
             <p class="card-preview">${escapeHtml(card.preview)}</p>
-            <div class="tag-row">
-              ${card.labels.map((label) => `<span class="tag">${escapeHtml(label)}</span>`).join('')}
-            </div>
             <div class="reveal-actions">
               <a class="button" href="${escapeHtml(card.url)}">Open</a>
               <button
@@ -6042,6 +6191,17 @@ def boot_payload(
     }
 
 
+def json_script_payload(data: object) -> str:
+    return (
+        json.dumps(data, ensure_ascii=False)
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
 def truncate_text(text: str, limit: int = MAX_CAPTURED_OUTPUT_CHARS) -> str:
     if len(text) <= limit:
         return text
@@ -6348,12 +6508,59 @@ def save_cpp_lab_file(relative_path: str, content: str, root: Optional[Path] = N
     return read_cpp_lab_file(relative_path, root)
 
 
+def cpp_lab_new_file_content(relative_path: str) -> str:
+    suffix = Path(relative_path).suffix.lower()
+    if suffix in CPP_LAB_SOURCE_EXTENSIONS:
+        return (
+            "#include <iostream>\n\n"
+            "int main() {\n"
+            "  std::cout << \"Hello from C++ Lab\\n\";\n"
+            "  return 0;\n"
+            "}\n"
+        )
+    return ""
+
+
+def normalize_cpp_lab_new_file_name(raw_name: str) -> str:
+    name = raw_name.strip()
+    if not name:
+        raise ValueError("File name is required.")
+    if "/" in name or "\\" in name:
+        raise ValueError("New files must be created directly in the C++ lab folder.")
+    if not CPP_LAB_NEW_FILE_RE.fullmatch(name):
+        raise ValueError("Use only letters, numbers, dot, underscore, and hyphen.")
+    path = Path(name)
+    if not path.suffix:
+        name = f"{name}.cpp"
+        path = Path(name)
+    if path.name != name:
+        raise ValueError("Invalid file name.")
+    if path.suffix.lower() not in CPP_LAB_EXTENSIONS:
+        raise ValueError("File type is not editable in the C++ lab.")
+    return name
+
+
+def create_cpp_lab_file(raw_name: str, root: Optional[Path] = None) -> CodeFile:
+    root = root or CPP_LAB_ROOT
+    relative_path = normalize_cpp_lab_new_file_name(raw_name)
+    root.mkdir(parents=True, exist_ok=True)
+    path = cpp_lab_file_path(relative_path, root)
+    if path.exists():
+        raise FileExistsError(relative_path)
+    path.write_text(cpp_lab_new_file_content(relative_path), encoding="utf-8")
+    return read_cpp_lab_file(relative_path, root)
+
+
 def compile_cpp_lab_project(
     stdin_data: str = "",
     root: Optional[Path] = None,
     runnable_path: Optional[str] = None,
+    standard: str = CPP_LAB_DEFAULT_STANDARD,
 ) -> Dict[str, object]:
     root = root or CPP_LAB_ROOT
+    if standard not in CPP_LAB_STANDARDS:
+        raise ValueError("Unsupported C++ standard.")
+    standard_flag = CPP_LAB_STANDARD_FLAGS[standard]
     if runnable_path is None:
         runnable_path = cpp_lab_default_file(cpp_lab_files(root))
     source_path = cpp_lab_file_path(runnable_path, root)
@@ -6380,7 +6587,7 @@ def compile_cpp_lab_project(
         run_metrics_path = tmp_path / "run_metrics.txt"
         compile_cmd = [
             "g++",
-            "-std=c++17",
+            f"-std={standard_flag}",
             "-O0",
             "-pipe",
             "-Wall",
@@ -6403,6 +6610,7 @@ def compile_cpp_lab_project(
                 "phase": "compile",
                 "compiled": False,
                 "compile_returncode": None,
+                "standard": standard,
                 "compile_stdout": truncate_text(compile_stdout_raw),
                 "compile_stderr": truncate_text(
                     compile_stderr_raw
@@ -6426,6 +6634,7 @@ def compile_cpp_lab_project(
                 "phase": "compile",
                 "compiled": False,
                 "compile_returncode": compile_returncode,
+                "standard": standard,
                 "compile_stdout": compile_stdout,
                 "compile_stderr": compile_stderr,
                 "compile_metrics": compile_metrics,
@@ -6456,6 +6665,7 @@ def compile_cpp_lab_project(
             "phase": "run",
             "compiled": True,
             "compile_returncode": compile_returncode,
+            "standard": standard,
             "compile_stdout": compile_stdout,
             "compile_stderr": compile_stderr,
             "compile_metrics": compile_metrics,
@@ -6593,7 +6803,7 @@ def render_page(title: str, body: str, extra_head: str = "", boot_data: Optional
     if boot_data is not None:
         boot_script = (
             '<script id="flashcards-data" type="application/json">'
-            f"{html.escape(json.dumps(boot_data, ensure_ascii=False), quote=True)}"
+            f"{json_script_payload(boot_data)}"
             "</script>"
         )
     return f"""<!doctype html>
@@ -6616,7 +6826,7 @@ def render_page(title: str, body: str, extra_head: str = "", boot_data: Optional
 <body>
   {body}
   {boot_script}
-  <script src="/_static/app.js" defer></script>
+  <script src="/_static/app.js?v={STATIC_ASSET_VERSION}" defer></script>
 </body>
 </html>"""
 
@@ -6635,6 +6845,7 @@ def render_top_nav(notebooks: Sequence[Notebook], active: str = "home") -> str:
         f'<a class="top-nav-link {"is-active" if active == notebook.spec.slug else ""}" '
         f'href="{notebook_default_url(notebook)}">{html.escape(nav_label(notebook))}</a>'
         for notebook in notebooks
+        if notebook.spec.slug == "cpp-awesome-cheatsheet"
     )
     return f"""
       <nav class="top-nav" aria-label="Primary">
@@ -6765,6 +6976,10 @@ def render_cpp_lab_page(notebooks: Sequence[Notebook]) -> str:
     )
     if not options:
         options = f'<option value="{CPP_LAB_MAIN_FILE}">{CPP_LAB_MAIN_FILE}</option>'
+    standard_options = "".join(
+        f'<option value="{standard}" {"selected" if standard == CPP_LAB_DEFAULT_STANDARD else ""}>{standard.replace("c++", "C++ ")}</option>'
+        for standard in CPP_LAB_STANDARDS
+    )
 
     body = f"""
     <div class="app-shell" data-cpp-lab-root>
@@ -6772,7 +6987,6 @@ def render_cpp_lab_page(notebooks: Sequence[Notebook]) -> str:
         <div>
           <p class="eyebrow">C++ code lab</p>
           <h1>C++ Lab</h1>
-          <p class="lede">Edit files from `cpp_awssome_project/random_pj` with CodeMirror 6, save changes to disk, and run the selected C++ source with g++.</p>
         </div>
         <div class="hero-card">
           <div class="stat">{len(files)}</div>
@@ -6782,13 +6996,20 @@ def render_cpp_lab_page(notebooks: Sequence[Notebook]) -> str:
       {render_top_nav(notebooks, CPP_LAB_SLUG)}
       <section class="cpp-lab-shell">
         <div class="cpp-lab-toolbar">
-          <select class="cpp-lab-file-select" data-cpp-lab-file-select aria-label="C++ lab file">
-            {options}
-          </select>
+          <div class="cpp-lab-file-controls">
+            <select class="cpp-lab-file-select" data-cpp-lab-file-select aria-label="C++ lab file">
+              {options}
+            </select>
+            <input class="cpp-lab-new-file" type="text" data-cpp-lab-new-file-name placeholder="new_file.cpp" aria-label="New C++ lab file name">
+            <button class="button-secondary" type="button" data-cpp-lab-new-file>Create File</button>
+            <select class="cpp-lab-standard-select" data-cpp-lab-standard aria-label="C++ standard">
+              {standard_options}
+            </select>
+          </div>
           <div class="cpp-lab-actions">
-            <span class="cpp-lab-shortcuts">Alt+C run · Ctrl+Enter run · Ctrl+S save · Ctrl+/ comment</span>
+            <span class="cpp-lab-shortcuts">⌥C Run · Ctrl↵ Run · CtrlS Save · Ctrl/</span>
             <button class="button-secondary" type="button" data-cpp-lab-save title="Save current file (Ctrl+S)">Save</button>
-            <button class="button" type="button" data-cpp-lab-run data-cpp-lab-run-shortcut accesskey="c" title="Save dirty files and run the selected C++ source (Alt+C)">Run Alt+C</button>
+            <button class="button" type="button" data-cpp-lab-run data-cpp-lab-run-shortcut accesskey="c" title="Save dirty files and run selected file (Alt+C)">Run</button>
             <button class="button-secondary" type="button" data-cpp-lab-clear>Clear</button>
           </div>
         </div>
@@ -7493,7 +7714,6 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
                   </div>
                   <h3>{html.escape(card.title)}</h3>
                   <div class="overview-card-body">{render_card_sections(card)}</div>
-                  <div class="tag-row">{section_badges(card.labels)}</div>
                   <div class="reveal-actions">
                     <a class="button-secondary" href="{card_url(notebook, card)}">Open card</a>
                   </div>
@@ -7515,7 +7735,6 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
                   </div>
                   <h3>{html.escape(card.title)}</h3>
                   <p class="card-preview">{html.escape(card.preview)}</p>
-                  <div class="tag-row">{section_badges(card.labels)}</div>
                 </a>
                 """
             )
@@ -7969,6 +8188,10 @@ class FlashcardServer(BaseHTTPRequestHandler):
             self.handle_cpp_lab_file_save(send_body=send_body)
             return
 
+        if route == "/_api/cpp-lab/new-file":
+            self.handle_cpp_lab_file_create(send_body=send_body)
+            return
+
         if route == "/_api/cpp-lab/run":
             self.handle_cpp_lab_run(send_body=send_body)
             return
@@ -8068,6 +8291,32 @@ class FlashcardServer(BaseHTTPRequestHandler):
             return
         self.send_json(self.cpp_lab_file_payload(code_file), send_body=send_body)
 
+    def handle_cpp_lab_file_create(self, send_body: bool) -> None:
+        try:
+            payload = self.read_json_body()
+        except ValueError as exc:
+            self.send_json({"ok": False, "error": str(exc)},
+                           status=400, send_body=send_body)
+            return
+
+        path = payload.get("path", "")
+        if not isinstance(path, str):
+            self.send_json({"ok": False, "error": "path must be a string."},
+                           status=400, send_body=send_body)
+            return
+
+        try:
+            code_file = create_cpp_lab_file(path)
+        except FileExistsError:
+            self.send_json({"ok": False, "error": "File already exists."},
+                           status=409, send_body=send_body)
+            return
+        except (OSError, ValueError) as exc:
+            self.send_json({"ok": False, "error": str(exc)},
+                           status=400, send_body=send_body)
+            return
+        self.send_json(self.cpp_lab_file_payload(code_file), status=201, send_body=send_body)
+
     def handle_cpp_lab_run(self, send_body: bool) -> None:
         try:
             payload = self.read_json_body()
@@ -8079,12 +8328,14 @@ class FlashcardServer(BaseHTTPRequestHandler):
         files = payload.get("files", [])
         stdin_data = payload.get("stdin", "")
         runnable_path = payload.get("runnable_path") or None
+        standard = payload.get("standard", CPP_LAB_DEFAULT_STANDARD)
         if (
             not isinstance(files, list)
             or not isinstance(stdin_data, str)
             or (runnable_path is not None and not isinstance(runnable_path, str))
+            or not isinstance(standard, str)
         ):
-            self.send_json({"ok": False, "error": "files must be a list, stdin must be a string, and runnable_path must be a string."},
+            self.send_json({"ok": False, "error": "files must be a list, stdin must be a string, runnable_path must be a string, and standard must be a string."},
                            status=400, send_body=send_body)
             return
 
@@ -8102,6 +8353,7 @@ class FlashcardServer(BaseHTTPRequestHandler):
             result = compile_cpp_lab_project(
                 stdin_data=stdin_data,
                 runnable_path=runnable_path,
+                standard=standard,
             )
         except (OSError, ValueError) as exc:
             self.send_json({"ok": False, "phase": "validation", "error": str(exc)},

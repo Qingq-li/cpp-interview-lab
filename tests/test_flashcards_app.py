@@ -12,9 +12,11 @@ from tools.flashcards_app import (
     build_notebooks,
     build_pwa_icon_png,
     build_service_worker_js,
+    STATIC_ASSET_VERSION,
     compile_cpp_submission,
     code_projects,
     boot_payload,
+    APP_JS,
     FlashcardServer,
     highlight_code,
     PersistentStateStore,
@@ -168,11 +170,18 @@ int main() {}
 
     def test_home_page_contains_compact_navigation(self):
         html = render_home(self.notebooks)
-        self.assertIn('href="/notes"', html)
-        self.assertIn('href="/saved"', html)
-        self.assertIn('href="/beginner"', html)
-        self.assertIn('href="/cpp-lab"', html)
-        self.assertIn("C++ Lab", html)
+        nav_html = html[html.index('<nav class="top-nav"'):html.index("</nav>")]
+        self.assertIn('href="/notes"', nav_html)
+        self.assertIn('href="/saved"', nav_html)
+        self.assertNotIn('href="/beginner"', nav_html)
+        self.assertIn('href="/cpp-awesome-cheatsheet"', nav_html)
+        self.assertIn('href="/code-reading"', nav_html)
+        self.assertIn('href="/cpp-lab"', nav_html)
+        self.assertIn("Cpp Awesome Cheatsheet", nav_html)
+        self.assertIn("Code Reading", nav_html)
+        self.assertIn("C++ Lab", nav_html)
+        self.assertIn("Saved", nav_html)
+        self.assertIn("My Notes", nav_html)
         self.assertNotIn("data-home-note-composer", html)
         self.assertNotIn("data-saved-root", html)
 
@@ -180,18 +189,22 @@ int main() {}
         html = render_cpp_lab_page(self.notebooks)
         self.assertIn("data-cpp-lab-root", html)
         self.assertIn("data-cpp-lab-file-select", html)
+        self.assertIn("data-cpp-lab-new-file-name", html)
+        self.assertIn("data-cpp-lab-new-file", html)
+        self.assertIn("data-cpp-lab-standard", html)
+        self.assertIn('value="c++17" selected', html)
+        self.assertIn('value="c++20"', html)
         self.assertIn("data-cpp-lab-editor-mount", html)
-        self.assertIn("CodeMirror", html)
         self.assertIn("data-cpp-lab-output", html)
         self.assertIn("data-cpp-lab-save", html)
         self.assertIn("data-cpp-lab-run", html)
         self.assertIn("data-cpp-lab-run-shortcut", html)
-        self.assertIn("Alt+C", html)
-        self.assertIn("Ctrl+/ comment", html)
+        self.assertIn("⌥C Run", html)
+        self.assertNotIn("Edit files from `cpp_awssome_project/random_pj`", html)
         self.assertIn("data-cpp-lab-clear", html)
         self.assertIn("data-cpp-lab-editor-theme", html)
         self.assertIn("data-cpp-lab-output-theme", html)
-        self.assertIn("selected C++ source", html)
+        self.assertIn("run selected file", html)
 
     def test_saved_page_render_matching_entries(self):
         html = render_saved_page(
@@ -214,11 +227,20 @@ int main() {}
         self.assertIn("上一题", html)
         self.assertIn("下一题", html)
         self.assertIn("data-answer-wrap", html)
+        self.assertIn("data-save-button", html)
         self.assertIn("data-note-root", html)
         self.assertIn("My Note", html)
         self.assertIn("playground-runner-layout", html)
         self.assertIn("playground-runner-code", html)
         self.assertIn("playground-runner-side", html)
+
+    def test_overview_cards_hide_section_badges(self):
+        html = render_overview(self.beginner)
+        first_tile = html.split('data-card-tile', 1)[1].split("</a>", 1)[0]
+        self.assertIn("指针和引用有什么区别？", first_tile)
+        self.assertIn("sections", first_tile)
+        self.assertNotIn('class="tag-row"', first_tile)
+        self.assertNotIn('<span class="tag">核心答案</span>', first_tile)
 
     def test_boot_payload_contains_persistent_state(self):
         payload = boot_payload([self.beginner])
@@ -228,11 +250,42 @@ int main() {}
         self.assertIn("notes", payload["persistentState"])
         self.assertIn("home_notes", payload["persistentState"])
 
+    def test_render_page_embeds_parseable_boot_json(self):
+        boot_data = {
+            "notebooks": [
+                {
+                    "slug": "demo",
+                    "title": 'A "quoted" <notebook> & title',
+                    "description": "",
+                    "totalCards": 0,
+                    "cards": [],
+                }
+            ],
+            "persistentState": {"saved_cards": ["demo:1"], "notebooks": {}, "notes": {}, "home_notes": {}},
+        }
+        html = render_page("demo", "<main></main>", boot_data=boot_data)
+        raw_json = html.split('<script id="flashcards-data" type="application/json">', 1)[1].split("</script>", 1)[0]
+        self.assertNotIn("&quot;", raw_json)
+        self.assertIn("\\u003cnotebook\\u003e", raw_json)
+        self.assertEqual(boot_data, json.loads(raw_json))
+
+    def test_saved_cards_merge_local_and_server_state(self):
+        self.assertIn("function mergeSavedCards", APP_JS)
+        self.assertIn("const currentSaved = getSavedCards();", APP_JS)
+        self.assertIn("keepalive: true", APP_JS)
+
+    def test_card_save_button_is_idempotent(self):
+        self.assertIn("function saveCardIfNeeded", APP_JS)
+        self.assertIn("saved.includes(key)", APP_JS)
+        self.assertIn("saveCardIfNeeded(notebookSlug, cardId);", APP_JS)
+        self.assertNotIn("toggleCardSaved(notebookSlug, cardId);", APP_JS)
+
     def test_pwa_assets_are_generated(self):
         html = render_page("demo", "<main></main>", boot_data=boot_payload([self.beginner]))
         self.assertIn('rel="manifest"', html)
         self.assertIn('apple-touch-icon', html)
         self.assertIn("apple-mobile-web-app-capable", html)
+        self.assertIn(f"/_static/app.js?v={STATIC_ASSET_VERSION}", html)
 
         manifest = PWA_MANIFEST
         self.assertEqual("standalone", manifest["display"])
@@ -240,6 +293,8 @@ int main() {}
 
         sw = build_service_worker_js()
         self.assertIn("CACHE_NAME", sw)
+        self.assertIn("flashcards-pwa-v6-clean-card-tags", sw)
+        self.assertIn(f"/_static/app.js?v={STATIC_ASSET_VERSION}", sw)
         self.assertIn("self.addEventListener('fetch'", sw)
 
         icon = build_pwa_icon_png(180)
@@ -445,6 +500,37 @@ int main() {}
         self.assertIn("data-notes-root", notes_html)
         self.assertIn("data-saved-page-root", saved_html)
 
+    def test_saved_route_shows_cards_after_state_api_save(self):
+        with TemporaryDirectory() as tmpdir:
+            FlashcardServer.notebooks = self.notebooks
+            FlashcardServer.state_store = PersistentStateStore(Path(tmpdir))
+            server = ThreadingHTTPServer(("127.0.0.1", 0), FlashcardServer)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                host, port = server.server_address
+                base_url = f"http://{host}:{port}"
+                save_request = Request(
+                    f"{base_url}/_api/state",
+                    data=json.dumps(
+                        {"kind": "saved_cards", "savedCards": ["advanced:2"]}
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(save_request, timeout=5) as response:
+                    save_payload = json.loads(response.read().decode("utf-8"))
+                with urlopen(f"{base_url}/saved", timeout=5) as response:
+                    saved_html = response.read().decode("utf-8")
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+        self.assertTrue(save_payload["ok"])
+        self.assertIn("<strong data-saved-count>1</strong>", saved_html)
+        self.assertIn("`std::move` 和 `std::forward` 的区别是什么？", saved_html)
+
     def test_cpp_lab_routes_and_apis(self):
         with TemporaryDirectory() as tmpdir:
             lab_root = Path(tmpdir) / "random_pj"
@@ -485,6 +571,35 @@ int main() {}
                 with urlopen(save_request, timeout=5) as response:
                     save_payload = json.loads(response.read().decode("utf-8"))
 
+                create_request = Request(
+                    f"{base_url}/_api/cpp-lab/new-file",
+                    data=json.dumps({"path": "auto_demo"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(create_request, timeout=5) as response:
+                    create_payload = json.loads(response.read().decode("utf-8"))
+
+                duplicate_request = Request(
+                    f"{base_url}/_api/cpp-lab/new-file",
+                    data=json.dumps({"path": "auto_demo.cpp"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as duplicate_error:
+                    urlopen(duplicate_request, timeout=5)
+                duplicate_payload = json.loads(duplicate_error.exception.read().decode("utf-8"))
+
+                bad_create_request = Request(
+                    f"{base_url}/_api/cpp-lab/new-file",
+                    data=json.dumps({"path": "../escape.cpp"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as bad_create_error:
+                    urlopen(bad_create_request, timeout=5)
+                bad_create_payload = json.loads(bad_create_error.exception.read().decode("utf-8"))
+
                 bad_request = Request(
                     f"{base_url}/_api/cpp-lab/file",
                     data=json.dumps(
@@ -496,6 +611,7 @@ int main() {}
                     urlopen(bad_request, timeout=5)
                 bad_payload = json.loads(bad_error.exception.read().decode("utf-8"))
                 saved_content = main_file.read_text(encoding="utf-8")
+                created_content = (lab_root / "auto_demo.cpp").read_text(encoding="utf-8")
             finally:
                 server.shutdown()
                 server.server_close()
@@ -510,6 +626,11 @@ int main() {}
         self.assertIn("code-token-preprocessor", file_payload["highlighted"])
         self.assertTrue(save_payload["ok"])
         self.assertIn("saved", saved_content)
+        self.assertTrue(create_payload["ok"])
+        self.assertEqual("auto_demo.cpp", create_payload["path"])
+        self.assertIn("Hello from C++ Lab", created_content)
+        self.assertFalse(duplicate_payload["ok"])
+        self.assertFalse(bad_create_payload["ok"])
         self.assertFalse(bad_payload["ok"])
         self.assertIn("inside", bad_payload["error"])
 
@@ -606,6 +727,7 @@ int main() {}
                     data=json.dumps(
                         {
                             "runnable_path": "random_classinherited_code.cpp",
+                            "standard": "c++20",
                             "files": [
                                 {
                                     "path": "random_classinherited_code.cpp",
@@ -627,6 +749,7 @@ int main() {}
 
         self.assertTrue(run_payload["ok"])
         self.assertEqual("random_classinherited_code.cpp", run_payload["runnable_file"])
+        self.assertEqual("c++20", run_payload["standard"])
         self.assertIn("current file", run_payload["run_stdout"])
 
     def test_cpp_compile_success(self):

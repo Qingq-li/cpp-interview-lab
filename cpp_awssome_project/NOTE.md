@@ -1531,3 +1531,122 @@ queue / produced_count
 join()
     -> 必须调用，用来等待线程结束
 ```
+
+---
+
+# `enum class` 和传统 `enum` 的区别
+
+`enum class` 是 C++11 引入的强类型枚举。它和 C++98 传统 `enum` 最大的区别有三个：
+
+1. 枚举值作用域不同。
+2. 是否能隐式转换成 `int` 不同。
+3. 底层整数类型的规则更清晰。
+
+---
+
+## 1. 作用域污染
+
+传统 `enum` 的枚举值会泄漏到外层作用域：
+
+```cpp
+// C++98 enum: 枚举值泄漏到外层作用域
+enum Color { Red, Green, Blue };
+enum Status { Red, Green, Blue };  // 编译错误：Red/Green/Blue 重复定义
+```
+
+这里 `Red`、`Green`、`Blue` 不是只属于 `Color`，而是直接进入了当前作用域。
+
+`enum class` 的枚举值被锁在枚举类型里：
+
+```cpp
+// C++11 enum class: 枚举值被锁在类型里
+enum class Color { Red, Green, Blue };
+enum class Status { Red, Green, Blue };  // OK：各是各的命名空间
+```
+
+使用时必须加类型前缀：
+
+```cpp
+Color c = Color::Red;   // OK：enum class 必须带作用域
+// Color c = Red;       // 编译错误：找不到 Red
+```
+
+这也是 `enum class` 更适合项目代码的原因：名字更明确，不容易和别的枚举、宏或变量冲突。
+
+---
+
+## 2. 隐式转换成 `int`
+
+传统 `enum` 可以隐式当成整数使用：
+
+```cpp
+enum Old { A = 1, B = 2 };
+
+int x = A;        // OK：C++98 enum 隐式转 int
+if (x == 1) { }   // OK
+int y = A + 5;    // OK，但语义容易变奇怪
+```
+
+这很方便，但也降低了类型安全：本来是一个状态值或类别值，却可以随意参与整数运算。
+
+`enum class` 不会隐式转成 `int`：
+
+```cpp
+enum class New { A = 1, B = 2 };
+
+// int z = New::A;  // 编译错误：不能隐式转 int
+int z = static_cast<int>(New::A);  // OK：显式转换，表达“我故意的”
+```
+
+面试里可以这样表达：
+
+```text
+enum class prevents accidental integer conversion.
+If I really need the numeric value, I use static_cast explicitly.
+```
+
+---
+
+## 3. 底层类型
+
+传统 `enum` 的底层类型如果不指定，具体实现可以选择合适的整数类型：
+
+```cpp
+enum Old { A = 1 };
+```
+
+`enum class` 默认底层类型是 `int`，也可以显式指定：
+
+```cpp
+#include <cstdint>
+
+enum class New : std::uint8_t {
+    A = 1
+};
+```
+
+显式指定底层类型常用于网络协议、文件格式、嵌入式或需要控制内存布局的场景。
+
+---
+
+## 总结
+
+| 对比点 | `enum` | `enum class` |
+|---|---|---|
+| 作用域 | 枚举值泄漏到外层 | 枚举值锁在类型里，如 `Color::Red` |
+| 隐式转 `int` | 可以 | 不可以，需要 `static_cast<int>(...)` |
+| 同名枚举值 | 容易冲突 | 不冲突 |
+| 指定底层类型 | C++11 起可以指定 | 默认 `int`，也可以指定，如 `: std::uint8_t` |
+| 现代 C++ 推荐 | 少用 | 强烈推荐 |
+
+最短结论：
+
+```text
+enum class = scoped + strongly typed enum
+
+scoped:
+    use Color::Red, no name pollution
+
+strongly typed:
+    no implicit int conversion
+```

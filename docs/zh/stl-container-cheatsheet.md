@@ -1,591 +1,804 @@
 # STL 容器速查表
 
-这份文档不按难度分级，而按“选容器时你真正关心的问题”来整理：
-
-- 底层结构
-- 时间复杂度
-- 内存布局
-- 迭代器失效
-- 适用场景
-- 高频面试追问
-
----
+这份文档按 flashcard 结构整理 STL 容器。重点不是只背复杂度表，而是把访问模式、内存布局、迭代器失效和项目选型联系起来。
 
 ## 1. 先记住一条默认原则
 
-如果没有明确理由，默认优先考虑：
+### 核心答案
 
-- 顺序容器：`std::vector`
-- 键值查找：`std::unordered_map`
-- 去重集合：`std::unordered_set`
-
-然后再根据下面这些问题修正选择：
-
-- 是否需要有序遍历
-- 是否需要随机访问
-- 是否需要头部插入删除
-- 是否非常在意缓存友好
-- 是否需要稳定的迭代器、引用、指针
-
-### 错误回答示例
-
-- “容器选型只看复杂度表就够了”
-- “默认就该用链表，因为插入删除快”
-- “所有场景统一 `vector` 或统一 `unordered_map` 就行”
-
+没有明确理由时，顺序容器先考虑 `vector`，键值查找先考虑 `unordered_map`，去重集合先考虑 `unordered_set`，再根据顺序、随机访问、插删位置、迭代器稳定性修正。
 
 ### English explanation
 
-In an English interview, I would say:
+In an English interview, I would answer it like this:
 
-- "When selecting a container, just look at the complexity table."
-- "By default, linked lists should be used because insertion and deletion are fast"
-- "Just unify `vector` or unify `unordered_map` for all scenes"
+Default to `vector`, `unordered_map`, and `unordered_set`, then adjust based on ordering, access pattern, insertion pattern, and iterator stability.
+
+### 错误回答示例
+
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
 
 ### 面试官想听什么
 
-- 你是否知道容器选择是“访问模式 + 内存布局 + 语义”共同决定的
-- 你是否知道默认选择可以有，但必须知道何时修正
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
 
 ### 项目里怎么说
 
-我会先从默认容器开始建模，再根据是否需要顺序、随机访问、双端操作、稳定迭代器这些约束修正，而不是上来就背复杂度表选容器。
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+std::vector<int> samples;
+std::unordered_map<std::string, int> counts;
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
 
 ---
 
 ## 2. 顺序容器总览
 
-| 容器 | 底层结构 | 是否连续内存 | 随机访问 | 头部插删 | 中间插删 | 尾部插入 | 典型场景 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `vector` | 动态数组 | 是 | 快 | 慢 | 慢 | 快，摊还 O(1) | 默认顺序容器 |
-| `array` | 固定长度数组封装 | 是 | 快 | 不适用 | 不适用 | 不适用 | 固定大小数据 |
-| `deque` | 分段连续存储 | 不是整体连续 | 快 | 快 | 一般 | 快 | 双端操作频繁 |
-| `list` | 双向链表 | 否 | 不支持 | 快 | 快 | 快 | 已知位置频繁插删 |
-| `forward_list` | 单向链表 | 否 | 不支持 | 头部快 | 一般 | 不适合 | 极简单链表场景 |
+### 核心答案
+
+顺序容器的核心差异是内存是否连续、是否支持随机访问、在哪个位置插删快，以及迭代器失效规则。
+
+### English explanation
+
+In an English interview, I would answer it like this:
+
+Sequence containers mainly differ in memory layout, random access, insertion position, and iterator invalidation.
+
+### 错误回答示例
+
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
+
+### 面试官想听什么
+
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
+
+### 项目里怎么说
+
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <array>
+#include <deque>
+#include <list>
+#include <vector>
+
+std::vector<int> a;
+std::array<int, 4> b{};
+std::deque<int> c;
+std::list<int> d;
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
 
 ---
 
 ## 3. `vector`
 
-### 关键特性
+### 核心答案
 
-- 默认顺序容器
-- 连续内存，缓存友好
-- 支持随机访问
-- 尾部插入效率高
-
+`vector` 是默认顺序容器：连续内存、随机访问快、尾插摊还 O(1)，但扩容会导致迭代器、引用、指针失效。
 
 ### English explanation
 
-In an English interview, I would say:
+In an English interview, I would answer it like this:
 
-- Default order container
-- Contiguous memory, cache friendly
-- Support random access
-- High tail insertion efficiency
-
-### 时间复杂度
-
-- `operator[]` / `at()`：O(1)
-- `push_back()`：摊还 O(1)
-- 尾部删除：O(1)
-- 中间插入/删除：O(n)
-- 查找：O(n)
-
-### 内存布局
-
-- `vector` 对象本身通常可以在栈上
-- 元素通常在堆上动态分配
-- 扩容时可能重新申请更大内存，并整体搬迁旧元素
-
-### 迭代器失效
-
-- 扩容后，原有迭代器、引用、指针通常全部失效
-- 中间插入/删除后，插入点及其后的迭代器可能失效
-
-### 高频面试追问
-
-- `reserve()` 和 `resize()` 的区别
-- 为什么 `vector` 常常比 `list` 更快
-- 扩容策略大概是什么
-
-### 什么时候用
-
-- 几乎所有默认顺序存储场景
-- 需要随机访问
-- 需要和 STL 算法紧密配合
-
-### 什么时候别急着用
-
-- 频繁头插头删
-- 非常依赖稳定引用/迭代器
+`vector` is the default sequence container: contiguous storage, fast random access, amortized O(1) push_back, but reallocation invalidates iterators and references.
 
 ### 错误回答示例
 
-- “`vector` 所有操作都最快”
-- “扩容只是性能问题，不影响正确性”
-- “只要用 STL，默认都该换成 `list`”
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
 
 ### 面试官想听什么
 
-- 你是否知道 `vector` 的优势来自连续内存和缓存友好
-- 你是否知道它的主要风险点是扩容和迭代器失效
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
 
 ### 项目里怎么说
 
-我会把 `vector` 当作默认顺序容器，因为它和算法协作最好、缓存友好、随机访问快。只有在访问模式明显不适合时才切换其他容器。
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <vector>
+
+int main() {
+    std::vector<int> v;
+    v.reserve(100);
+    v.push_back(1);
+    int x = v[0];
+    (void)x;
+}
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
 
 ---
 
 ## 4. `array`
 
-### 关键特性
+### 核心答案
 
-- 固定长度
-- 连续内存
-- 大小是类型的一部分
-
+`std::array<T,N>` 是固定大小数组封装，大小是类型的一部分，连续内存、无动态分配，适合编译期已知长度的小数组。
 
 ### English explanation
 
-In an English interview, I would say:
+In an English interview, I would answer it like this:
 
-- fixed length
-- contiguous memory
-- size is part of type
-
-### 时间复杂度
-
-- 随机访问：O(1)
-- 没有动态扩容
-
-### 内存布局
-
-- `std::array<T, N>` 本质上像“带接口的固定数组”
-- 它放在哪里取决于它作为哪个对象的一部分
-- 局部变量形式时，整体通常在栈上
-
-### 迭代器失效
-
-- 不存在扩容问题
-- 只要对象本身还活着，迭代器通常稳定
-
-### 什么时候用
-
-- 大小固定
-- 想表达“固定长度语义”
-- 希望兼顾数组性能和 STL 接口
+`std::array` wraps a fixed-size contiguous array with value semantics and no dynamic allocation.
 
 ### 错误回答示例
 
-- “`array` 一定在栈上，所以一定更好”
-- “固定大小就没必要用 STL 容器”
-- “`array` 和 C 风格数组完全没有区别”
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
 
 ### 面试官想听什么
 
-- 你是否知道 `array` 的大小是类型的一部分
-- 你是否知道它保留了数组性能，同时提供 STL 风格接口
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
 
 ### 项目里怎么说
 
-如果长度固定且我希望类型系统直接表达这个约束，我会优先 `std::array`，这样比裸数组更安全，也更容易和 STL 算法配合。
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <array>
+
+std::array<int, 3> rgb{255, 128, 0};
+static_assert(rgb.size() == 3);
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
 
 ---
 
 ## 5. `deque`
 
-### 关键特性
+### 核心答案
 
-- 双端队列
-- 支持头尾快速插删
-- 支持随机访问
-- 不是整体连续内存
-
+`deque` 支持头尾高效插删和随机访问，但不是整体连续内存；适合队列式双端增长，不适合要求连续 buffer 的接口。
 
 ### English explanation
 
-In an English interview, I would say:
+In an English interview, I would answer it like this:
 
-- Deque
-- Supports quick insertion and deletion of head and tail
-- Support random access
-- Not overall contiguous memory
-
-### 时间复杂度
-
-- 头尾插删：通常 O(1)
-- 随机访问：O(1)
-- 中间插删：一般较慢
-
-### 内存布局
-
-- 通常是分段连续存储
-- 比 `vector` 更灵活，但缓存友好性通常略差
-
-### 迭代器失效
-
-- 比 `vector` 规则更复杂
-- 插入删除两端元素时，部分实现中迭代器可能失效
-- 面试里通常答到“比 `vector` 更复杂，需要查具体规则”即可
-
-### 什么时候用
-
-- 频繁头尾操作
-- 需要比 `list` 更好的随机访问能力
+`deque` supports efficient insertion at both ends and random access, but its storage is not one contiguous block.
 
 ### 错误回答示例
 
-- “`deque` 就是双向链表”
-- “它和 `vector` 唯一差别就是能头插”
-- “只要有双端操作需求就一定应该用 `deque`”
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
 
 ### 面试官想听什么
 
-- 你是否知道 `deque` 支持随机访问，但不是整体连续内存
-- 你是否知道它是在 `vector` 和 `list` 之间做权衡
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
 
 ### 项目里怎么说
 
-如果我需要双端操作但又不想退化到链表，我会考虑 `deque`。但如果主要还是顺序遍历和算法处理，我通常仍会优先 `vector`。
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <deque>
+
+int main() {
+    std::deque<int> q;
+    q.push_front(1);
+    q.push_back(2);
+    int first = q.front();
+    (void)first;
+}
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
 
 ---
 
 ## 6. `list`
 
-### 关键特性
+### 核心答案
 
-- 双向链表
-- 节点分散存储
-- 不支持随机访问
-- 迭代器通常更稳定
-
+`list` 是双向链表，已知位置插删稳定，但随机访问差、缓存不友好；现代 C++ 中不应因为“插删 O(1)”就默认选择它。
 
 ### English explanation
 
-In an English interview, I would say:
+In an English interview, I would answer it like this:
 
-- Doubly linked list
-- Node decentralized storage
-- Random access is not supported
-- Iterators are generally more stable
-
-### 时间复杂度
-
-- 已知位置插入/删除：O(1)
-- 查找某个位置：O(n)
-- 随机访问：不支持
-
-### 内存布局
-
-- 每个节点单独分配
-- 节点之间通过指针链接
-- 额外指针开销明显
-
-### 迭代器失效
-
-- 插入删除其他节点时，未被删除节点的迭代器通常仍然有效
-- 被删除节点对应的迭代器失效
-
-### 高频面试追问
-
-- 为什么理论上插入快，但工程里很多时候不如 `vector`
-- `splice()` 有什么价值
-
-### 什么时候用
-
-- 已经持有目标位置迭代器
-- 中间插删极多
-- 强依赖稳定节点/稳定迭代器
-
-### 什么时候别优先用
-
-- 大量顺序遍历但更看重 cache
-- 需要随机访问
+`list` has stable node insertion and removal at known positions, but poor cache locality and no random access.
 
 ### 错误回答示例
 
-- “链表插删是 O(1)，所以默认更高效”
-- “`list` 适合一切经常修改的场景”
-- “有了 `list` 就不需要考虑迭代器失效”
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
 
 ### 面试官想听什么
 
-- 你是否知道 `list` 的理论复杂度优势并不自动转化为真实工程优势
-- 你是否知道它真正适用的前提往往是“已持有目标位置迭代器”
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
 
 ### 项目里怎么说
 
-我只有在确实需要稳定节点、频繁中间插删、并且通常已经有目标位置迭代器时，才会认真考虑 `list`。否则默认仍会优先 `vector`。
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <list>
+
+int main() {
+    std::list<int> xs{1, 3};
+    auto it = xs.begin();
+    ++it;
+    xs.insert(it, 2);
+}
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
 
 ---
 
 ## 7. `map` vs `unordered_map`
 
-| 容器 | 底层 | 顺序 | 平均查找 | 最坏查找 | 范围查询 | 典型用途 |
-| --- | --- | --- | --- | --- | --- | --- |
-| `map` | 平衡树 | 有序 | O(log n) | O(log n) | 支持 | 有序键值表 |
-| `unordered_map` | 哈希表 | 无序 | O(1) | O(n) | 不适合 | 高频 key lookup |
+### 核心答案
 
-### `map` 重点
-
-- 键有序
-- 支持 `lower_bound`、`upper_bound`
-- 适合范围查询、有序输出
-
+`map` 有序、迭代顺序稳定、基于比较；`unordered_map` 平均查找快、基于哈希、无序但受哈希质量和 rehash 影响。
 
 ### English explanation
 
-In an English interview, I would say:
+In an English interview, I would answer it like this:
 
-- Keys ordered
-- Support `lower_bound`, `upper_bound`
-- Suitable for range query and ordered output
-
-### `unordered_map` 重点
-
-- 平均查找更快
-- 不保证顺序
-- 性能受哈希函数和冲突影响
-
-### 选型建议
-
-- 需要顺序、范围查询、稳定输出：`map`
-- 只关心查找效率：`unordered_map`
+`map` is ordered and comparison-based; `unordered_map` is hash-based, usually faster on average, but unordered and affected by hashing and rehashing.
 
 ### 错误回答示例
 
-- “`unordered_map` 一定比 `map` 快”
-- “`map` 已经过时”
-- “选这个只要看平均复杂度”
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
 
 ### 面试官想听什么
 
-- 你是否知道一个强调顺序和范围查询，一个强调平均查找效率
-- 你是否知道最坏复杂度、哈希冲突和调试体验也要考虑
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
 
 ### 项目里怎么说
 
-如果业务逻辑依赖键顺序、范围查询或稳定输出，我会选 `map`；如果主要是高频 key lookup 且不依赖顺序，我会优先考虑 `unordered_map`。
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <map>
+#include <string>
+#include <unordered_map>
+
+std::map<std::string, int> ordered;
+std::unordered_map<std::string, int> fast_lookup;
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
 
 ---
 
 ## 8. `set` vs `unordered_set`
 
-| 容器 | 是否有序 | 是否重复 | 平均查找 | 典型用途 |
-| --- | --- | --- | --- | --- |
-| `set` | 有序 | 不允许 | O(log n) | 有序去重集合 |
-| `unordered_set` | 无序 | 不允许 | O(1) | 快速 membership test |
+### 核心答案
 
-### 核心理解
-
-- 它们表达的是“集合语义”，不是“少功能版容器”
-- 重点不在于存值，而在于“元素唯一”
-
+`set` 维护有序唯一集合，适合有序遍历和范围查询；`unordered_set` 适合平均 O(1) 去重查找，但不保证顺序。
 
 ### English explanation
 
-In an English interview, I would say:
+In an English interview, I would answer it like this:
 
-- They express "collection semantics", not "less functional containers"
-- The focus is not on stored value, but on "uniqueness of elements"
+`set` keeps ordered unique values; `unordered_set` provides hash-based uniqueness without ordering.
 
 ### 错误回答示例
 
-- “`set` 就是不能重复的 `vector`”
-- “只要元素唯一就随便选”
-- “`unordered_set` 一定更好”
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
 
 ### 面试官想听什么
 
-- 你是否知道集合容器关注的是去重语义
-- 你是否能根据顺序需求和查找需求做选择
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
 
 ### 项目里怎么说
 
-如果我需要去重并保持有序遍历，会选 `set`；如果只关心元素是否存在且不关心顺序，会优先考虑 `unordered_set`。
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <set>
+#include <unordered_set>
+
+std::set<int> sorted_ids;
+std::unordered_set<int> seen_ids;
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
 
 ---
 
 ## 9. 适配器：`stack`、`queue`、`priority_queue`
 
-### `stack`
+### 核心答案
 
-- 语义：后进先出
-- 常用接口：`push`、`pop`、`top`
-- 常见场景：表达式求值、括号匹配、DFS 辅助
-
+容器适配器限制接口来表达特定访问模式：`stack` 后进先出，`queue` 先进先出，`priority_queue` 每次取优先级最高元素。
 
 ### English explanation
 
-In an English interview, I would say:
+In an English interview, I would answer it like this:
 
-- Semantics: last in, first out
-- Common interfaces: `push`, `pop`, `top`
-- Common scenarios: expression evaluation, bracket matching, DFS assistance
-
-### `queue`
-
-- 语义：先进先出
-- 常用接口：`push`、`pop`、`front`
-- 常见场景：BFS、任务调度
-
-### `priority_queue`
-
-- 语义：优先级最高元素先出
-- 默认：最大堆
-- 常见场景：Top K、调度、贪心
-
-### 关键提醒
-
-- 它们是容器适配器，不是底层存储结构本身
-- `queue` / `stack` 默认常常基于 `deque`
+Container adaptors restrict operations to express stack, queue, and priority-queue access patterns.
 
 ### 错误回答示例
 
-- “它们就是普通容器”
-- “`priority_queue` 会自动给你排成一个有序数组”
-- “`queue` 就等于 `deque`”
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
 
 ### 面试官想听什么
 
-- 你是否知道它们提供的是受限接口
-- 你是否知道 `priority_queue` 的核心是堆语义，不是完整排序结果
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
 
 ### 项目里怎么说
 
-如果业务只需要队列、栈或堆顶优先访问语义，我会直接使用适配器，而不是用底层容器自己手工约束接口。
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <queue>
+#include <stack>
+
+std::stack<int> st;
+std::queue<int> q;
+std::priority_queue<int> pq;
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
 
 ---
 
 ## 10. 迭代器失效速查
 
-### `vector`
+### 核心答案
 
-- 扩容：基本全失效
-- 中间插删：该点及之后可能失效
-
+迭代器失效是 STL 高频坑：`vector` 扩容通常全失效，`unordered_map` rehash 迭代器失效，链表插删通常只影响被删节点。
 
 ### English explanation
 
-In an English interview, I would say:
+In an English interview, I would answer it like this:
 
-- Expansion: Basically all failures
-- Intermediate insertion and deletion: this point and later may be invalid.
-
-### `deque`
-
-- 规则较复杂
-- 两端插删和中间插删都可能导致部分失效
-
-### `list`
-
-- 删除节点本身失效
-- 其他节点迭代器通常稳定
-
-### `map` / `set`
-
-- 插入通常不让已有迭代器失效
-- 删除某个元素只让该元素迭代器失效
-
-### 面试回答建议
-
-如果记不住全部细节，至少要稳稳说出：
-
-- `vector` 扩容是高频失效点
-- `list` 迭代器更稳定
-- 关联容器通常比 `vector` 稳定
+Iterator invalidation is a common STL pitfall: vector reallocation invalidates broadly, unordered_map rehash invalidates iterators, and list is more stable.
 
 ### 错误回答示例
 
-- “迭代器拿到之后就一直能用”
-- “只有删除元素才会失效”
-- “所有容器的失效规则差不多”
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
 
 ### 面试官想听什么
 
-- 你是否知道容器修改可能破坏旧迭代器、引用和指针
-- 你是否能说出 `vector` 扩容这一最常见风险点
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
 
 ### 项目里怎么说
 
-我在写 STL 代码时会特别小心容器修改后的旧迭代器复用问题，尤其是 `vector` 的插入、扩容和 erase 之后的代码路径。
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <vector>
+
+int main() {
+    std::vector<int> v{1, 2};
+    auto it = v.begin();
+    v.push_back(3); // 可能扩容，it 可能失效
+}
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
 
 ---
 
 ## 11. 容器选型速记
 
-### 如果你只记一句话
+### 核心答案
 
-- 默认顺序容器：`vector`
-- 默认哈希查找：`unordered_map`
-- 默认去重集合：`unordered_set`
-
+容器选型先看访问模式：遍历和随机访问选 `vector`，有序选 `map/set`，哈希查找选 `unordered_*`，双端选 `deque`，已知位置稳定插删才考虑 `list`。
 
 ### English explanation
 
-In an English interview, I would say:
+In an English interview, I would answer it like this:
 
-- Default order container: `vector`
-- Default hash lookup: `unordered_map`
-- Default deduplication set: `unordered_set`
-
-### 如果你还记两句
-
-- 需要有序：`map` / `set`
-- 需要头尾操作：`deque`
-
-### 如果你再记一句
-
-- 非常依赖中间插删且已有位置迭代器：才认真考虑 `list`
+Choose containers by access pattern: vector for traversal/random access, map/set for ordering, unordered containers for hash lookup, deque for both ends, list for stable known-position edits.
 
 ### 错误回答示例
 
-- “我习惯哪个就一直用哪个”
-- “面试只要背出复杂度就够了”
-- “先选容器，再想访问模式”
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
 
 ### 面试官想听什么
 
-- 你是否能用一句清楚的话讲出默认选择和修正原则
-- 你是否能把选型结论落到真实访问模式上
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
 
 ### 项目里怎么说
 
-我通常先用默认容器快速建模，再根据访问模式、顺序需求、稳定性要求和性能瓶颈做针对性替换。
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <deque>
+#include <map>
+#include <unordered_map>
+#include <vector>
+
+// 选型不是背名字，而是匹配访问模式。
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
 
 ---
 
 ## 12. 高频面试问法
 
-### 为什么 `vector` 经常比 `list` 快？
+### 核心答案
 
-因为 `vector` 连续内存、缓存友好；`list` 虽然理论上插删复杂度好，但节点分散、指针跳转多，真实 CPU 行为往往更差。
-
+常见追问集中在 `vector` 为什么常比 `list` 快、`reserve` vs `resize`、`unordered_map` 为什么不一定比 `map` 好、迭代器何时失效。
 
 ### English explanation
 
-In an English interview, I would say:
+In an English interview, I would answer it like this:
 
-Because `vector` has continuous memory and is cache-friendly; although `list` has good insertion and deletion complexity in theory, it has scattered nodes and many pointer jumps, and the real CPU behavior is often worse.
+Common interview follow-ups focus on vector vs list, reserve vs resize, unordered_map tradeoffs, and iterator invalidation.
 
-### `reserve()` 和 `resize()` 的区别？
+### 错误回答示例
 
-- `reserve()` 改容量，不改逻辑大小
-- `resize()` 改逻辑大小，可能创建新元素
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
 
-### 为什么 `unordered_map` 不是一定比 `map` 好？
+### 面试官想听什么
 
-因为它不保序、最坏复杂度可能变差，而且哈希表有冲突和内存开销问题。
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
 
-### 为什么 `list` 不支持 `operator[]`？
+### 项目里怎么说
 
-因为链表不支持常数时间随机访问。
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <vector>
+
+int main() {
+    std::vector<int> v;
+    v.reserve(10); // 改 capacity，不改 size
+    v.resize(5);   // 改 size，构造元素
+}
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
 
 ---
 
 ## 13. 复习建议
 
-- 背复杂度之前，先理解底层结构
-- 背迭代器失效之前，先理解容器是否会搬家
-- 背选型结论之前，先问自己访问模式是什么
+### 核心答案
+
+STL 容器复习不要只背复杂度表，要把复杂度、内存布局、缓存友好、迭代器失效和工程语义一起说清。
+
+### English explanation
+
+In an English interview, I would answer it like this:
+
+When reviewing STL containers, combine complexity, memory layout, cache locality, iterator invalidation, and semantic intent.
+
+### 错误回答示例
+
+- “容器选型只看复杂度表”
+- “链表插删 O(1)，所以默认比 vector 好”
+- “unordered 容器一定比有序容器快”
+
+### 面试官想听什么
+
+- 你是否能结合访问模式和内存布局选容器
+- 你是否知道迭代器、引用、指针什么时候会失效
+- 你是否能说清默认选择以及修正条件
+
+### 项目里怎么说
+
+项目里我会先从默认容器开始，再按约束修正：是否需要有序、随机访问、双端操作、稳定迭代器、连续内存或哈希查找。选型要服务于数据访问模式，而不是服务于背复杂度表。
+
+### 深入解释
+
+- 连续内存通常更缓存友好，遍历性能常常优于节点式容器
+- 哈希容器平均查找快，但受哈希质量、负载因子和 rehash 影响
+- 有序容器提供排序和范围查询，这是 unordered 容器没有的语义
+- 迭代器失效经常比单次操作复杂度更容易导致真实 bug
+
+### 示例
+
+```cpp
+#include <vector>
+
+// 默认 vector，然后按约束修正。
+std::vector<int> default_sequence;
+```
+
+### 代码讲解
+
+- 示例展示该容器或选型原则的最小用法
+- 面试时要补充它的访问模式、内存布局和失效规则
+- 如果保存了迭代器、引用或指针，要说明后续插入删除是否安全
+- 项目选型里要解释为什么不用另一个常见容器
+
+### 高频坑
+
+- 不要只说“快”，要说是哪种操作快
+- 不要忽略扩容、rehash 和迭代器失效
+- 不要把底层结构当成唯一依据，接口语义同样重要
+
+---

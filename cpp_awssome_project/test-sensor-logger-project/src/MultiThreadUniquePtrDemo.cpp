@@ -46,8 +46,8 @@ int main() {
     // - 如果未来用于数组大小、模板参数等需要编译期常量的地方，也能直接使用。
     constexpr int producer_count = 8;      // producer 线程数量
     constexpr int consumer_count = 8;      // consumer 线程数量
-    constexpr int items_per_producer = 250000; // 每个 producer 生成的任务数
-    constexpr int payload_size = 64;       // 每个任务 payload 中的整数数量
+    constexpr int items_per_producer = 25000; // 每个 producer 生成的任务数
+    constexpr int payload_size = 6400;       // 每个任务 payload 中的整数数量
 
     // 队列元素类型是 std::unique_ptr<WorkItem>。
     // unique_ptr 是 C++11 的独占所有权智能指针：同一时刻只有一个 owner。
