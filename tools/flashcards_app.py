@@ -706,7 +706,298 @@ APP_CSS = """
 }
 
 html {
-  color-scheme: light;
+  color-scheme: light dark;
+}
+
+[data-theme="dark"] {
+  --bg: #1a1a2e;
+  --bg-2: #16213e;
+  --surface: rgba(30, 30, 50, 0.9);
+  --surface-solid: #1e1e32;
+  --surface-strong: #252540;
+  --ink: #e8e6e3;
+  --muted: #c5c0b8;
+  --line: rgba(200, 200, 200, 0.14);
+  --accent: #2dd4bf;
+  --accent-2: #fb923c;
+  --accent-3: #f97316;
+  --shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
+  --radius: 22px;
+  --radius-sm: 14px;
+  --max: 1160px;
+  --font-body: "Avenir Next", "Segoe UI", "Noto Sans SC", "PingFang SC", sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Georgia", serif;
+  --font-mono: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+}
+
+[data-theme="dark"] .question-cell {
+  background: #2a2a3e;
+  color: #b0aec0;
+  border-color: rgba(200, 200, 200, 0.14);
+}
+
+[data-theme="dark"] .question-cell.is-today {
+  background: linear-gradient(135deg, #2563eb, #0284c7);
+  color: #fff;
+  border-color: rgba(59, 130, 246, 0.35);
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.28);
+}
+
+[data-theme="dark"] .question-cell.is-old {
+  background: #3a3a52;
+  color: #c5c0d0;
+}
+
+[data-theme="dark"] .question-cell.is-new {
+  background: #2a2a3e;
+}
+
+[data-theme="dark"] .question-cell.is-saved {
+  outline-color: rgba(251, 146, 60, 0.45);
+}
+
+[data-theme="dark"] .card-tile {
+  background: rgba(30, 30, 50, 0.82);
+}
+
+[data-theme="dark"] .top-nav {
+  background: rgba(30, 30, 50, 0.64);
+}
+
+[data-theme="dark"] .top-nav-link {
+  background: rgba(40, 40, 60, 0.82);
+  color: var(--ink);
+  border-color: rgba(200, 200, 200, 0.12);
+}
+
+[data-theme="dark"] .jump-sidebar,
+[data-theme="dark"] .reader-sidebar {
+  background: rgba(30, 30, 50, 0.9);
+}
+
+[data-theme="dark"] .home-quick-shell {
+  background: rgba(30, 30, 50, 0.44);
+}
+
+[data-theme="dark"] .quick-card {
+  background: linear-gradient(180deg, rgba(30, 30, 50, 0.98), rgba(24, 24, 42, 0.9));
+}
+
+[data-theme="dark"] .hero-card {
+  background: rgba(30, 30, 50, 0.76);
+}
+
+[data-theme="dark"] .card-tile .card-number {
+  background: rgba(45, 212, 191, 0.12);
+}
+
+[data-theme="dark"] .home-note-shell {
+  background: rgba(30, 30, 50, 0.64);
+  border-color: rgba(45, 212, 191, 0.16);
+}
+
+[data-theme="dark"] .home-note-title,
+[data-theme="dark"] .note-type-option {
+  background: #2a2a3e;
+  border-color: rgba(200, 200, 200, 0.14);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .note-editor {
+  background: #2a2a3e;
+  border-color: rgba(200, 200, 200, 0.14);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .note-callout {
+  background: rgba(45, 212, 191, 0.08);
+  border-color: rgba(45, 212, 191, 0.16);
+}
+
+[data-theme="dark"] .note-attachment-card {
+  background: #2a2a3e;
+  border-color: rgba(200, 200, 200, 0.12);
+}
+
+[data-theme="dark"] .note-attachment-preview {
+  background: #3a3a52;
+}
+
+[data-theme="dark"] .note-panel {
+  background: rgba(30, 30, 50, 0.9);
+  border-color: rgba(45, 212, 191, 0.16);
+}
+
+[data-theme="dark"] .note-preview-shell,
+[data-theme="dark"] .note-attachments-shell {
+  background: rgba(30, 30, 50, 0.88);
+  border-color: rgba(200, 200, 200, 0.12);
+}
+
+[data-theme="dark"] .note-file-icon {
+  background: rgba(45, 212, 191, 0.12);
+}
+
+[data-theme="dark"] .note-section-head {
+  background: rgba(251, 146, 60, 0.08);
+  border-bottom-color: rgba(251, 146, 60, 0.12);
+  color: var(--accent-2);
+}
+
+[data-theme="dark"] .note-panel-head {
+  background: rgba(45, 212, 191, 0.06);
+  border-bottom-color: rgba(45, 212, 191, 0.10);
+}
+
+[data-theme="dark"] .home-note-card .card-number {
+  background: rgba(251, 146, 60, 0.14);
+  color: var(--accent-2);
+}
+
+[data-theme="dark"] .answer-section p code,
+[data-theme="dark"] .answer-section li code {
+  background: rgba(251, 146, 60, 0.16);
+  color: #fbbf24;
+}
+
+[data-theme="dark"] .answer-section {
+  background: rgba(30, 30, 50, 0.86);
+}
+
+[data-theme="dark"] .answer-section .section-head {
+  background: rgba(45, 212, 191, 0.08);
+  border-bottom-color: rgba(45, 212, 191, 0.10);
+}
+
+[data-theme="dark"] .answer-section blockquote {
+  background: rgba(45, 212, 191, 0.06);
+  border-left-color: rgba(45, 212, 191, 0.38);
+}
+
+[data-theme="dark"] .answer-section.is-english .section-head {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+[data-theme="dark"] .answer-section th {
+  background: rgba(45, 212, 191, 0.10);
+}
+
+[data-theme="dark"] .answer-section tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="dark"] .overview-card-body .answer-section {
+  background: rgba(30, 30, 50, 0.62);
+}
+
+[data-theme="dark"] .question-block,
+[data-theme="dark"] .flashcard {
+  background:
+    linear-gradient(180deg, rgba(30, 30, 50, 0.96), rgba(26, 26, 46, 0.9)),
+    var(--surface-solid);
+}
+
+[data-theme="dark"] .playground-shell {
+  background: rgba(30, 30, 50, 0.95);
+}
+
+[data-theme="dark"] .playground-section {
+  background: rgba(30, 30, 50, 0.82);
+}
+
+[data-theme="dark"] .playground-section-head {
+  background: rgba(45, 212, 191, 0.08);
+  border-bottom-color: rgba(45, 212, 191, 0.10);
+}
+
+[data-theme="dark"] .overview-card-body .section-head {
+  color: var(--accent);
+}
+
+[data-theme="dark"] .code-file-head {
+  background: rgba(45, 212, 191, 0.08);
+  border-bottom-color: rgba(200, 200, 200, 0.10);
+}
+
+[data-theme="dark"] .code-file-sidebar {
+  background: rgba(30, 30, 50, 0.92);
+}
+
+[data-theme="dark"] .cpp-lab-toolbar {
+  background: rgba(30, 30, 50, 0.68);
+}
+
+[data-theme="dark"] .cpp-lab-file-select,
+[data-theme="dark"] .cpp-lab-new-file,
+[data-theme="dark"] .cpp-lab-standard-select {
+  background: #2a2a3e;
+  color: var(--ink);
+  border-color: rgba(200, 200, 200, 0.14);
+}
+
+[data-theme="dark"] .cpp-lab-layout {
+  background: #1e1e32;
+}
+
+[data-theme="dark"] .cpp-lab-pane:not(.is-dark) {
+  background: #1e1e32;
+}
+
+[data-theme="dark"] .cpp-lab-pane-head {
+  background: rgba(30, 30, 50, 0.58);
+  border-bottom-color: rgba(200, 200, 200, 0.12);
+}
+
+[data-theme="dark"] .cpp-lab-editor-mount,
+[data-theme="dark"] .cpp-lab-editor-mount .cm-editor {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+[data-theme="dark"] .cpp-lab-pane.is-dark .cpp-lab-editor-mount,
+[data-theme="dark"] .cpp-lab-pane.is-dark .cpp-lab-editor-mount .cm-editor {
+  background: #1e1e1e;
+  color: #d4d4d4;
+}
+
+[data-theme="dark"] .cpp-lab-output {
+  background: #1a1a2e;
+  color: #e8e6e3;
+}
+
+[data-theme="dark"] .cpp-lab-pane.is-dark .cpp-lab-output {
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
+[data-theme="dark"] .home-note-editor.is-code {
+  background: #1a1a2e;
+  color: #e8e6e3;
+}
+
+[data-theme="dark"] .progress-track {
+  background: rgba(200, 200, 200, 0.10);
+}
+
+[data-theme="dark"] .button-secondary {
+  background: rgba(40, 40, 60, 0.9);
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+[data-theme="dark"] .button-secondary.is-saved {
+  background: rgba(45, 212, 191, 0.14);
+  border-color: rgba(45, 212, 191, 0.28);
+  color: var(--accent);
+}
+
+[data-theme="dark"] .tag {
+  background: rgba(251, 146, 60, 0.12);
+  color: var(--accent-2);
+}
+
+[data-theme="dark"] .note-summary strong {
+  color: var(--ink);
 }
 
 body {
@@ -5795,6 +6086,32 @@ function registerServiceWorker() {
   });
 }
 
+function bindThemeToggle() {
+  const THEME_KEY = getStoreKey('theme');
+  const toggle = document.querySelector('[data-theme-toggle]');
+
+  const applyTheme = (dark) => {
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    if (toggle) {
+      toggle.innerHTML = dark ? '☀️ Light' : '🌙 Dark';
+      toggle.setAttribute('aria-pressed', dark ? 'true' : 'false');
+    }
+  };
+
+  const stored = localStorage.getItem(THEME_KEY);
+  const preferDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const dark = stored === 'dark' || (!stored && preferDark);
+  applyTheme(dark);
+
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      const nextDark = document.documentElement.getAttribute('data-theme') !== 'dark';
+      applyTheme(nextDark);
+      localStorage.setItem(THEME_KEY, nextDark ? 'dark' : 'light');
+    });
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const init = async () => {
     hydratePersistentStateFromBoot();
@@ -5804,6 +6121,7 @@ document.addEventListener('DOMContentLoaded', () => {
       console.warn('Persistent state refresh failed:', error);
     }
 
+    bindThemeToggle();
     bindHomePage();
     bindSavedPage();
     bindNotesPage();
@@ -5964,10 +6282,14 @@ def render_markdown(text: str) -> str:
             return
 
         header = table_rows[0]
-        body_rows = table_rows[2:] if is_markdown_table_separator(table_rows[1]) else table_rows[1:]
-        head_html = "".join(f"<th>{render_inline(cell)}</th>" for cell in header)
+        body_rows = table_rows[2:] if is_markdown_table_separator(
+            table_rows[1]) else table_rows[1:]
+        head_html = "".join(
+            f"<th>{render_inline(cell)}</th>" for cell in header)
         body_html = "".join(
-            "<tr>" + "".join(f"<td>{render_inline(cell)}</td>" for cell in row) + "</tr>"
+            "<tr>" +
+            "".join(
+                f"<td>{render_inline(cell)}</td>" for cell in row) + "</tr>"
             for row in body_rows
         )
         output.append(
@@ -6258,7 +6580,8 @@ def parse_resource_time_metrics(metrics_path: Path) -> Dict[str, object]:
             except ValueError:
                 metrics[key] = None
 
-    metrics["available"] = any(value is not None for key, value in metrics.items() if key != "available")
+    metrics["available"] = any(
+        value is not None for key, value in metrics.items() if key != "available")
     return metrics
 
 
@@ -6292,7 +6615,8 @@ def run_resource_tracked_command(
         start_new_session=True,
     )
     try:
-        stdout, stderr = proc.communicate(input=stdin_data, timeout=timeout_seconds)
+        stdout, stderr = proc.communicate(
+            input=stdin_data, timeout=timeout_seconds)
         timed_out = False
     except subprocess.TimeoutExpired:
         timed_out = True
@@ -6426,7 +6750,8 @@ def is_cpp_lab_source_file(path: Path) -> bool:
 def cpp_lab_relative_path(path: Path, root: Optional[Path] = None) -> str:
     root = root or CPP_LAB_ROOT
     resolved_root = root.resolve()
-    resolved_path = (resolved_root / path).resolve() if not path.is_absolute() else path.resolve()
+    resolved_path = (
+        resolved_root / path).resolve() if not path.is_absolute() else path.resolve()
     try:
         relative = resolved_path.relative_to(resolved_root)
     except ValueError as exc:
@@ -6500,7 +6825,8 @@ def read_cpp_lab_file(relative_path: str, root: Optional[Path] = None) -> CodeFi
 def save_cpp_lab_file(relative_path: str, content: str, root: Optional[Path] = None) -> CodeFile:
     root = root or CPP_LAB_ROOT
     if len(content) > MAX_SOURCE_CHARS:
-        raise ValueError(f"Source too large; limit is {MAX_SOURCE_CHARS} characters.")
+        raise ValueError(
+            f"Source too large; limit is {MAX_SOURCE_CHARS} characters.")
     path = cpp_lab_file_path(relative_path, root)
     if not path.parent.exists():
         raise ValueError("Parent directory does not exist.")
@@ -6526,9 +6852,11 @@ def normalize_cpp_lab_new_file_name(raw_name: str) -> str:
     if not name:
         raise ValueError("File name is required.")
     if "/" in name or "\\" in name:
-        raise ValueError("New files must be created directly in the C++ lab folder.")
+        raise ValueError(
+            "New files must be created directly in the C++ lab folder.")
     if not CPP_LAB_NEW_FILE_RE.fullmatch(name):
-        raise ValueError("Use only letters, numbers, dot, underscore, and hyphen.")
+        raise ValueError(
+            "Use only letters, numbers, dot, underscore, and hyphen.")
     path = Path(name)
     if not path.suffix:
         name = f"{name}.cpp"
@@ -6855,6 +7183,7 @@ def render_top_nav(notebooks: Sequence[Notebook], active: str = "home") -> str:
         <a class="top-nav-link {"is-active" if active == CPP_LAB_SLUG else ""}" href="/{CPP_LAB_SLUG}">C++ Lab</a>
         <a class="top-nav-link {"is-active" if active == "saved" else ""}" href="/saved">Saved</a>
         <a class="top-nav-link {"is-active" if active == "notes" else ""}" href="/notes">My Notes</a>
+        <button class="top-nav-link" type="button" data-theme-toggle aria-label="Toggle dark mode" style="margin-left:auto">🌙 Dark</button>
       </nav>
     """
 
@@ -6961,7 +7290,8 @@ def home_note_entries(persistent_state: Optional[Dict[str, object]]) -> List[str
                 }
             )
     entries.sort(
-        key=lambda entry: entry.get("updatedAt", "") or entry.get("createdAt", ""),
+        key=lambda entry: entry.get(
+            "updatedAt", "") or entry.get("createdAt", ""),
         reverse=True,
     )
     return [entry["html"] for entry in entries]
@@ -7313,7 +7643,8 @@ def load_code_project(root: Path, number: int) -> CodeProject:
                 content=content,
             )
         )
-    slug = safe_slug_path_component(root.relative_to(CODE_PROJECT_ROOT).as_posix())
+    slug = safe_slug_path_component(
+        root.relative_to(CODE_PROJECT_ROOT).as_posix())
     return CodeProject(
         number=number,
         slug=slug,
@@ -8266,7 +8597,8 @@ class FlashcardServer(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "error": str(exc)},
                            status=400, send_body=send_body)
             return
-        self.send_json(self.cpp_lab_file_payload(code_file), send_body=send_body)
+        self.send_json(self.cpp_lab_file_payload(
+            code_file), send_body=send_body)
 
     def handle_cpp_lab_file_save(self, send_body: bool) -> None:
         try:
@@ -8289,7 +8621,8 @@ class FlashcardServer(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "error": str(exc)},
                            status=400, send_body=send_body)
             return
-        self.send_json(self.cpp_lab_file_payload(code_file), send_body=send_body)
+        self.send_json(self.cpp_lab_file_payload(
+            code_file), send_body=send_body)
 
     def handle_cpp_lab_file_create(self, send_body: bool) -> None:
         try:
@@ -8315,7 +8648,8 @@ class FlashcardServer(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "error": str(exc)},
                            status=400, send_body=send_body)
             return
-        self.send_json(self.cpp_lab_file_payload(code_file), status=201, send_body=send_body)
+        self.send_json(self.cpp_lab_file_payload(code_file),
+                       status=201, send_body=send_body)
 
     def handle_cpp_lab_run(self, send_body: bool) -> None:
         try:
@@ -8347,7 +8681,8 @@ class FlashcardServer(BaseHTTPRequestHandler):
                 path = item.get("path", "")
                 content = item.get("content", "")
                 if not isinstance(path, str) or not isinstance(content, str):
-                    raise ValueError("Each file entry needs string path and content.")
+                    raise ValueError(
+                        "Each file entry needs string path and content.")
                 code_file = save_cpp_lab_file(path, content)
                 saved_files.append(code_file.relative_path)
             result = compile_cpp_lab_project(
