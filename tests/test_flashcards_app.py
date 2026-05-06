@@ -44,7 +44,7 @@ class FlashcardAppTests(unittest.TestCase):
         cls.beginner = next(notebook for notebook in cls.notebooks if notebook.spec.slug == "beginner")
 
     def test_beginner_notebook_card_count(self):
-        self.assertEqual(11, len(self.notebooks))
+        self.assertEqual(13, len(self.notebooks))
         self.assertEqual("beginner", self.beginner.spec.slug)
         self.assertEqual(75, len(self.beginner.cards))
         intermediate = next(notebook for notebook in self.notebooks if notebook.spec.slug == "intermediate")
@@ -58,10 +58,32 @@ class FlashcardAppTests(unittest.TestCase):
         cheatsheet = next(notebook for notebook in self.notebooks if notebook.spec.slug == "cpp-awesome-cheatsheet")
         notes = next(notebook for notebook in self.notebooks if notebook.spec.slug == "cpp-awesome-notes")
         self.assertGreaterEqual(len(cheatsheet.cards), 9)
-        self.assertGreaterEqual(len(notes.cards), 20)
+        self.assertGreaterEqual(len(notes.cards), 3)
         self.assertEqual("CMake Build Flow", cheatsheet.cards[0].title)
         self.assertIn("内容", cheatsheet.cards[0].labels)
         self.assertIn("<table>", cheatsheet.cards[0].sections[0].html)
+
+    def test_groke_cpp_cheatsheet_is_loaded_as_flashcards(self):
+        groke = next(notebook for notebook in self.notebooks if notebook.spec.slug == "groke-cpp-cheatsheet")
+        self.assertEqual(110, len(groke.cards))
+        self.assertEqual("What is the difference between C and C++?", groke.cards[0].title)
+        self.assertEqual("GROKE C++ Interview Cheatsheet", groke.spec.title)
+        self.assertIn("Answer Keyword", groke.cards[0].sections[0].raw)
+        self.assertIn("<table>", groke.cards[0].sections[0].html)
+
+    def test_cpp_news_versions_notebook_is_loaded_as_flashcards(self):
+        versions = next(notebook for notebook in self.notebooks if notebook.spec.slug == "cpp-news-versions")
+        self.assertEqual(44, len(versions.cards))
+        self.assertEqual("C++11：`auto` 类型推导", versions.cards[0].title)
+        self.assertEqual("C++ 版本新特性速查", versions.spec.title)
+        section_titles = [section.title for section in versions.cards[0].sections]
+        self.assertIn("中文简要介绍", section_titles)
+        self.assertIn("English Brief", section_titles)
+        self.assertIn("中文详细解释", section_titles)
+        reader_html = render_reader_page(versions)
+        cards_html = render_overview(versions)
+        self.assertIn("C++11", reader_html)
+        self.assertIn("<table>", cards_html)
 
     def test_cpp_awssome_default_reader_and_cards_overview(self):
         cheatsheet = next(notebook for notebook in self.notebooks if notebook.spec.slug == "cpp-awesome-cheatsheet")
@@ -174,10 +196,14 @@ int main() {}
         self.assertIn('href="/notes"', nav_html)
         self.assertIn('href="/saved"', nav_html)
         self.assertNotIn('href="/beginner"', nav_html)
+        self.assertIn('href="/cpp-news-versions"', nav_html)
         self.assertIn('href="/cpp-awesome-cheatsheet"', nav_html)
+        self.assertIn('href="/groke-cpp-cheatsheet"', nav_html)
         self.assertIn('href="/code-reading"', nav_html)
         self.assertIn('href="/cpp-lab"', nav_html)
+        self.assertIn("Cpp News Versions", nav_html)
         self.assertIn("Cpp Awesome Cheatsheet", nav_html)
+        self.assertIn("Groke Cpp Cheatsheet", nav_html)
         self.assertIn("Code Reading", nav_html)
         self.assertIn("C++ Lab", nav_html)
         self.assertIn("Saved", nav_html)

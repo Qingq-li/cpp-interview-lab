@@ -132,6 +132,12 @@ NOTEBOOKS: Tuple[NotebookSpec, ...] = (
         description="聚焦 optional、variant、string_view、span、concepts 等现代特性。",
     ),
     NotebookSpec(
+        slug="cpp-news-versions",
+        title="C++ 版本新特性速查",
+        source_path=ROOT / "docs" / "zh" / "cpp_news_versions.md",
+        description="按 C++11/14/17/20/23 归类整理面试高频语言特性和常用标准库新增功能。",
+    ),
+    NotebookSpec(
         slug="stl-container-cheatsheet",
         title="STL 容器速查表",
         source_path=ROOT / "docs" / "zh" / "stl-container-cheatsheet.md",
@@ -156,6 +162,12 @@ NOTEBOOKS: Tuple[NotebookSpec, ...] = (
         description="整理 CMake、CTest、类语法、lambda 捕获和 ThreadSafeQueue 的速查内容。",
     ),
     NotebookSpec(
+        slug="groke-cpp-cheatsheet",
+        title="GROKE C++ Interview Cheatsheet",
+        source_path=ROOT / "cpp_awssome_project" / "GROKE_Cheatsheet.md",
+        description="English-only C++ interview cards focused on ownership, modern C++, STL, templates, concurrency, performance, and API design.",
+    ),
+    NotebookSpec(
         slug="cpp-awesome-notes",
         title="C++ Awesome Project Notes",
         source_path=ROOT / "cpp_awssome_project" / "NOTE.md",
@@ -163,7 +175,7 @@ NOTEBOOKS: Tuple[NotebookSpec, ...] = (
     ),
 )
 
-NOTE_READER_SLUGS = {"cpp-awesome-cheatsheet", "cpp-awesome-notes"}
+NOTE_READER_SLUGS = {"cpp-news-versions", "cpp-awesome-cheatsheet", "groke-cpp-cheatsheet", "cpp-awesome-notes"}
 CODE_READING_SLUG = "code-reading"
 CPP_LAB_SLUG = "cpp-lab"
 CODE_PROJECT_ROOT = ROOT / "cpp_awssome_project"
@@ -7173,7 +7185,7 @@ def render_top_nav(notebooks: Sequence[Notebook], active: str = "home") -> str:
         f'<a class="top-nav-link {"is-active" if active == notebook.spec.slug else ""}" '
         f'href="{notebook_default_url(notebook)}">{html.escape(nav_label(notebook))}</a>'
         for notebook in notebooks
-        if notebook.spec.slug == "cpp-awesome-cheatsheet"
+        if notebook.spec.slug in {"cpp-news-versions", "cpp-awesome-cheatsheet", "groke-cpp-cheatsheet"}
     )
     return f"""
       <nav class="top-nav" aria-label="Primary">
