@@ -267,7 +267,7 @@ PWA_ICON_180_PATH = "/_static/pwa-icon-180.png"
 PWA_ICON_512_PATH = "/_static/pwa-icon-512.png"
 PWA_MANIFEST_PATH = "/manifest.webmanifest"
 PWA_SERVICE_WORKER_PATH = "/_static/sw.js"
-STATIC_ASSET_VERSION = "20260505-clean-card-tags"
+STATIC_ASSET_VERSION = "20260509-codemirror-cdn"
 
 
 def _png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -4406,13 +4406,23 @@ function bindCppLab() {
   let cm = null;
   let suppressChange = false;
 
+  const CM_DEPS = [
+    '@codemirror/state@6.6.0',
+    '@codemirror/view@6.42.1',
+    '@codemirror/language@6.12.3',
+    '@codemirror/commands@6.10.3',
+    '@codemirror/search@6.5.11',
+    '@codemirror/autocomplete@6.20.0',
+    '@codemirror/lint@6.9.6',
+  ].join(',');
+
   const CDN = {
-    codemirror: 'https://esm.sh/codemirror@6.0.1?deps=@codemirror/state@6.5.2,@codemirror/view@6.38.8,@codemirror/language@6.11.3,@codemirror/commands@6.8.1',
-    cpp: 'https://esm.sh/@codemirror/lang-cpp@6.0.3?deps=@codemirror/state@6.5.2,@codemirror/view@6.38.8,@codemirror/language@6.11.3',
-    state: 'https://esm.sh/@codemirror/state@6.5.2',
-    view: 'https://esm.sh/@codemirror/view@6.38.8?deps=@codemirror/state@6.5.2',
-    commands: 'https://esm.sh/@codemirror/commands@6.8.1?deps=@codemirror/state@6.5.2,@codemirror/view@6.38.8,@codemirror/language@6.11.3',
-    oneDark: 'https://esm.sh/@codemirror/theme-one-dark@6.1.3?deps=@codemirror/state@6.5.2,@codemirror/view@6.38.8,@codemirror/language@6.11.3',
+    codemirror: `https://esm.sh/codemirror@6.0.2?deps=${CM_DEPS}`,
+    cpp: `https://esm.sh/@codemirror/lang-cpp@6.0.3?deps=${CM_DEPS}`,
+    state: 'https://esm.sh/@codemirror/state@6.6.0',
+    view: 'https://esm.sh/@codemirror/view@6.42.1?deps=@codemirror/state@6.6.0',
+    commands: `https://esm.sh/@codemirror/commands@6.10.3?deps=${CM_DEPS}`,
+    oneDark: `https://esm.sh/@codemirror/theme-one-dark@6.1.3?deps=${CM_DEPS}`,
   };
 
   const setStatus = (message) => {
