@@ -44,15 +44,23 @@ class FlashcardAppTests(unittest.TestCase):
         cls.beginner = next(notebook for notebook in cls.notebooks if notebook.spec.slug == "beginner")
 
     def test_beginner_notebook_card_count(self):
-        self.assertEqual(13, len(self.notebooks))
+        self.assertEqual(8, len(self.notebooks))
         self.assertEqual("beginner", self.beginner.spec.slug)
         self.assertEqual(75, len(self.beginner.cards))
         intermediate = next(notebook for notebook in self.notebooks if notebook.spec.slug == "intermediate")
         advanced = next(notebook for notebook in self.notebooks if notebook.spec.slug == "advanced")
-        code_examples = next(notebook for notebook in self.notebooks if notebook.spec.slug == "code-examples")
+        versions = next(notebook for notebook in self.notebooks if notebook.spec.slug == "cpp-news-versions")
+        std_library = next(notebook for notebook in self.notebooks if notebook.spec.slug == "std-library")
+        awesome = next(notebook for notebook in self.notebooks if notebook.spec.slug == "cpp-awesome-cheatsheet")
+        groke = next(notebook for notebook in self.notebooks if notebook.spec.slug == "groke-cpp-cheatsheet")
+        notes = next(notebook for notebook in self.notebooks if notebook.spec.slug == "cpp-awesome-notes")
         self.assertEqual(45, len(intermediate.cards))
         self.assertEqual(40, len(advanced.cards))
-        self.assertEqual(50, len(code_examples.cards))
+        self.assertEqual(45, len(versions.cards))
+        self.assertEqual(10, len(std_library.cards))
+        self.assertGreaterEqual(len(awesome.cards), 9)
+        self.assertGreaterEqual(len(groke.cards), 100)
+        self.assertGreaterEqual(len(notes.cards), 3)
 
     def test_cpp_awssome_markdown_notebooks_are_loaded(self):
         cheatsheet = next(notebook for notebook in self.notebooks if notebook.spec.slug == "cpp-awesome-cheatsheet")
@@ -73,7 +81,7 @@ class FlashcardAppTests(unittest.TestCase):
 
     def test_cpp_news_versions_notebook_is_loaded_as_flashcards(self):
         versions = next(notebook for notebook in self.notebooks if notebook.spec.slug == "cpp-news-versions")
-        self.assertEqual(44, len(versions.cards))
+        self.assertEqual(45, len(versions.cards))
         self.assertEqual("C++11：`auto` 类型推导", versions.cards[0].title)
         self.assertEqual("C++ 版本新特性速查", versions.spec.title)
         section_titles = [section.title for section in versions.cards[0].sections]
@@ -84,6 +92,13 @@ class FlashcardAppTests(unittest.TestCase):
         cards_html = render_overview(versions)
         self.assertIn("C++11", reader_html)
         self.assertIn("<table>", cards_html)
+
+    def test_std_library_notebook_is_loaded_as_flashcards(self):
+        std_library = next(notebook for notebook in self.notebooks if notebook.spec.slug == "std-library")
+        self.assertEqual(10, len(std_library.cards))
+        self.assertEqual("std 标准库学习材料", std_library.spec.title)
+        self.assertEqual("`std` 标准库到底怎么学？", std_library.cards[0].title)
+        self.assertIn("核心答案", [section.title for section in std_library.cards[0].sections])
 
     def test_cpp_awssome_default_reader_and_cards_overview(self):
         cheatsheet = next(notebook for notebook in self.notebooks if notebook.spec.slug == "cpp-awesome-cheatsheet")
@@ -262,7 +277,7 @@ int main() {}
 
     def test_overview_cards_hide_section_badges(self):
         html = render_overview(self.beginner)
-        first_tile = html.split('data-card-tile', 1)[1].split("</a>", 1)[0]
+        first_tile = html.split('data-card-tile', 1)[1].split("</article>", 1)[0]
         self.assertIn("指针和引用有什么区别？", first_tile)
         self.assertIn("sections", first_tile)
         self.assertNotIn('class="tag-row"', first_tile)
@@ -275,6 +290,54 @@ int main() {}
         self.assertIn("notebooks", payload["persistentState"])
         self.assertIn("notes", payload["persistentState"])
         self.assertIn("home_notes", payload["persistentState"])
+        self.assertIn("imported_notebooks", payload["persistentState"])
+        self.assertIn("hidden_cards", payload["persistentState"])
+
+    def test_home_page_contains_markdown_import_controls(self):
+        html = render_home(self.notebooks)
+        self.assertLess(html.index("overview-grid"), html.index("home-import-shell"))
+        self.assertIn("data-import-md-file", html)
+        self.assertIn("data-import-md-button", html)
+        self.assertIn("home-import-shell", html)
+        self.assertIn("不会新增或修改仓库里的 docs 文档", html)
+
+    def test_imported_notebook_is_loaded_from_state(self):
+        state = {
+            "imported_notebooks": {
+                "imported-local": {
+                    "title": "Local MD",
+                    "description": "local import",
+                    "markdown": "## 1. Local Question\n\n### 核心答案\n\nLocal answer",
+                    "filename": "local.md",
+                }
+            }
+        }
+        notebooks = flashcards_app.apply_persistent_state_to_notebooks(self.notebooks, state)
+        imported = next(notebook for notebook in notebooks if notebook.spec.slug == "imported-local")
+        self.assertEqual("Local MD", imported.spec.title)
+        self.assertEqual(1, len(imported.cards))
+        self.assertEqual("Local Question", imported.cards[0].title)
+
+    def test_card_edit_and_hidden_cards_are_state_overlays(self):
+        state = {
+            "card_edits": {
+                "beginner": {
+                    "1": {
+                        "title": "Edited pointer card",
+                        "body": "### 核心答案\n\nEdited answer",
+                    }
+                }
+            },
+            "hidden_cards": {"beginner": ["1"]},
+        }
+        notebooks = flashcards_app.apply_persistent_state_to_notebooks(self.notebooks, state)
+        beginner = next(notebook for notebook in notebooks if notebook.spec.slug == "beginner")
+        self.assertEqual("Edited pointer card", beginner.cards[0].title)
+        self.assertIn("Edited answer", beginner.cards[0].sections[0].raw)
+        html = render_overview(beginner, state)
+        self.assertNotIn("Edited pointer card", html.split("Hidden flashcards", 1)[0])
+        self.assertIn("Hidden flashcards", html)
+        self.assertIn("data-unhide-card-button", html)
 
     def test_render_page_embeds_parseable_boot_json(self):
         boot_data = {

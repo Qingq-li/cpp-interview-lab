@@ -17,7 +17,7 @@ import uuid
 import struct
 import zlib
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -114,46 +114,16 @@ NOTEBOOKS: Tuple[NotebookSpec, ...] = (
         description="深入完美转发、内存模型、SFINAE、对象模型和现代 C++ 设计。",
     ),
     NotebookSpec(
-        slug="coding-round",
-        title="手写代码题",
-        source_path=ROOT / "docs" / "zh" / "coding-round.md",
-        description="训练常见手写实现、边界条件分析和代码表达能力。",
-    ),
-    NotebookSpec(
-        slug="code-examples",
-        title="C++ Code Examples：知识点代码库",
-        source_path=ROOT / "docs" / "zh" / "code-examples.md",
-        description="用可运行代码复习 C++ 高频知识点、常见坑和工程写法。",
-    ),
-    NotebookSpec(
-        slug="modern-cpp",
-        title="C++17 / C++20 高频特性",
-        source_path=ROOT / "docs" / "zh" / "modern-cpp.md",
-        description="聚焦 optional、variant、string_view、span、concepts 等现代特性。",
-    ),
-    NotebookSpec(
         slug="cpp-news-versions",
         title="C++ 版本新特性速查",
         source_path=ROOT / "docs" / "zh" / "cpp_news_versions.md",
         description="按 C++11/14/17/20/23 归类整理面试高频语言特性和常用标准库新增功能。",
     ),
     NotebookSpec(
-        slug="stl-container-cheatsheet",
-        title="STL 容器速查表",
-        source_path=ROOT / "docs" / "zh" / "stl-container-cheatsheet.md",
-        description="记录 STL 容器的复杂度、迭代器失效和容器选择原则。",
-    ),
-    NotebookSpec(
-        slug="concurrency-deep-dive",
-        title="并发专题",
-        source_path=ROOT / "docs" / "zh" / "concurrency-deep-dive.md",
-        description="覆盖线程、锁、条件变量、内存模型、线程池和 async/future。",
-    ),
-    NotebookSpec(
-        slug="project-answer-templates",
-        title="项目回答模板",
-        source_path=ROOT / "docs" / "zh" / "project-answer-templates.md",
-        description="把八股题连接到真实项目表达，适合面试回答训练。",
+        slug="std-library",
+        title="std 标准库学习材料",
+        source_path=ROOT / "docs" / "zh" / "std-library.md",
+        description="把容器、算法、字符串、视图、时间、文件系统、智能指针和并发工具串成一套学习路径。",
     ),
     NotebookSpec(
         slug="cpp-awesome-cheatsheet",
@@ -175,7 +145,7 @@ NOTEBOOKS: Tuple[NotebookSpec, ...] = (
     ),
 )
 
-NOTE_READER_SLUGS = {"cpp-news-versions", "cpp-awesome-cheatsheet", "groke-cpp-cheatsheet", "cpp-awesome-notes"}
+NOTE_READER_SLUGS = {"cpp-news-versions", "std-library", "cpp-awesome-cheatsheet", "groke-cpp-cheatsheet", "cpp-awesome-notes"}
 CODE_READING_SLUG = "code-reading"
 CPP_LAB_SLUG = "cpp-lab"
 CODE_PROJECT_ROOT = ROOT / "cpp_awssome_project"
@@ -244,6 +214,7 @@ RUN_TIMEOUT_SECONDS = 3
 MAX_CAPTURED_OUTPUT_CHARS = 20_000
 MAX_NOTE_TEXT_CHARS = 100_000
 MAX_NOTE_ATTACHMENT_BYTES = 8 * 1024 * 1024
+MAX_IMPORTED_MARKDOWN_CHARS = 400_000
 RESOURCE_TIME_BIN = shutil.which("time") or "/usr/bin/time"
 RESOURCE_TIME_FORMAT = "\n".join(
     [
@@ -267,7 +238,7 @@ PWA_ICON_180_PATH = "/_static/pwa-icon-180.png"
 PWA_ICON_512_PATH = "/_static/pwa-icon-512.png"
 PWA_MANIFEST_PATH = "/manifest.webmanifest"
 PWA_SERVICE_WORKER_PATH = "/_static/sw.js"
-STATIC_ASSET_VERSION = "20260509-codemirror-cdn"
+STATIC_ASSET_VERSION = "20260510-import-edit-hide"
 
 
 def _png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -498,6 +469,10 @@ class PersistentStateStore:
             "notebooks": {},
             "notes": {},
             "home_notes": {},
+            "imported_notebooks": {},
+            "notebook_edits": {},
+            "card_edits": {},
+            "hidden_cards": {},
         }
 
     def _load(self) -> Dict[str, object]:
@@ -520,6 +495,10 @@ class PersistentStateStore:
         notebooks = data.get("notebooks", {})
         notes = data.get("notes", {})
         home_notes = data.get("home_notes", {})
+        imported_notebooks = data.get("imported_notebooks", {})
+        notebook_edits = data.get("notebook_edits", {})
+        card_edits = data.get("card_edits", {})
+        hidden_cards = data.get("hidden_cards", {})
         if not isinstance(saved_cards, list):
             saved_cards = []
         if not isinstance(notebooks, dict):
@@ -528,6 +507,14 @@ class PersistentStateStore:
             notes = {}
         if not isinstance(home_notes, dict):
             home_notes = {}
+        if not isinstance(imported_notebooks, dict):
+            imported_notebooks = {}
+        if not isinstance(notebook_edits, dict):
+            notebook_edits = {}
+        if not isinstance(card_edits, dict):
+            card_edits = {}
+        if not isinstance(hidden_cards, dict):
+            hidden_cards = {}
         return {
             "saved_cards": [str(entry) for entry in saved_cards],
             "notebooks": {
@@ -548,6 +535,30 @@ class PersistentStateStore:
                 str(note_id): self._normalize_home_note_state(str(note_id), note_state)
                 for note_id, note_state in home_notes.items()
                 if isinstance(note_state, dict)
+            },
+            "imported_notebooks": {
+                str(slug): self._normalize_imported_notebook_state(str(slug), notebook_state)
+                for slug, notebook_state in imported_notebooks.items()
+                if isinstance(notebook_state, dict)
+            },
+            "notebook_edits": {
+                str(slug): self._normalize_notebook_edit_state(edit_state)
+                for slug, edit_state in notebook_edits.items()
+                if isinstance(edit_state, dict)
+            },
+            "card_edits": {
+                str(slug): {
+                    str(card_id): self._normalize_card_edit_state(edit_state)
+                    for card_id, edit_state in cards.items()
+                    if isinstance(edit_state, dict)
+                }
+                for slug, cards in card_edits.items()
+                if isinstance(cards, dict)
+            },
+            "hidden_cards": {
+                str(slug): [str(card_id) for card_id in card_ids if str(card_id)]
+                for slug, card_ids in hidden_cards.items()
+                if isinstance(card_ids, list)
             },
         }
 
@@ -632,6 +643,46 @@ class PersistentStateStore:
             "updatedAt": normalized["updatedAt"],
         }
 
+    @staticmethod
+    def _normalize_imported_notebook_state(slug: str, state: Dict[str, object]) -> Dict[str, object]:
+        title = state.get("title", "")
+        description = state.get("description", "")
+        markdown = state.get("markdown", "")
+        filename = state.get("filename", "")
+        created_at = state.get("createdAt", "")
+        updated_at = state.get("updatedAt", "")
+        return {
+            "slug": slug,
+            "title": title if isinstance(title, str) else "",
+            "description": description if isinstance(description, str) else "",
+            "markdown": markdown[:MAX_IMPORTED_MARKDOWN_CHARS] if isinstance(markdown, str) else "",
+            "filename": filename if isinstance(filename, str) else "",
+            "createdAt": created_at if isinstance(created_at, str) else "",
+            "updatedAt": updated_at if isinstance(updated_at, str) else "",
+        }
+
+    @staticmethod
+    def _normalize_notebook_edit_state(state: Dict[str, object]) -> Dict[str, object]:
+        title = state.get("title", "")
+        description = state.get("description", "")
+        updated_at = state.get("updatedAt", "")
+        return {
+            "title": title if isinstance(title, str) else "",
+            "description": description if isinstance(description, str) else "",
+            "updatedAt": updated_at if isinstance(updated_at, str) else "",
+        }
+
+    @staticmethod
+    def _normalize_card_edit_state(state: Dict[str, object]) -> Dict[str, object]:
+        title = state.get("title", "")
+        body = state.get("body", "")
+        updated_at = state.get("updatedAt", "")
+        return {
+            "title": title if isinstance(title, str) else "",
+            "body": body[:MAX_IMPORTED_MARKDOWN_CHARS] if isinstance(body, str) else "",
+            "updatedAt": updated_at if isinstance(updated_at, str) else "",
+        }
+
     def snapshot(self) -> Dict[str, object]:
         with self._lock:
             return json.loads(json.dumps(self._state))
@@ -673,6 +724,51 @@ class PersistentStateStore:
                 self._state["home_notes"] = home_notes
             home_notes[str(note_id)] = self._normalize_home_note_state(
                 str(note_id), note_state)
+            self._persist()
+
+    def save_imported_notebook_state(self, slug: str, notebook_state: Dict[str, object]) -> None:
+        with self._lock:
+            imported_notebooks = self._state.setdefault(
+                "imported_notebooks", {})
+            if not isinstance(imported_notebooks, dict):
+                imported_notebooks = {}
+                self._state["imported_notebooks"] = imported_notebooks
+            imported_notebooks[str(slug)] = self._normalize_imported_notebook_state(
+                str(slug), notebook_state)
+            self._persist()
+
+    def save_notebook_edit_state(self, notebook_slug: str, edit_state: Dict[str, object]) -> None:
+        with self._lock:
+            notebook_edits = self._state.setdefault("notebook_edits", {})
+            if not isinstance(notebook_edits, dict):
+                notebook_edits = {}
+                self._state["notebook_edits"] = notebook_edits
+            notebook_edits[str(notebook_slug)] = self._normalize_notebook_edit_state(
+                edit_state)
+            self._persist()
+
+    def save_card_edit_state(self, notebook_slug: str, card_id: str, edit_state: Dict[str, object]) -> None:
+        with self._lock:
+            card_edits = self._state.setdefault("card_edits", {})
+            if not isinstance(card_edits, dict):
+                card_edits = {}
+                self._state["card_edits"] = card_edits
+            notebook_edits = card_edits.setdefault(str(notebook_slug), {})
+            if not isinstance(notebook_edits, dict):
+                notebook_edits = {}
+                card_edits[str(notebook_slug)] = notebook_edits
+            notebook_edits[str(card_id)] = self._normalize_card_edit_state(
+                edit_state)
+            self._persist()
+
+    def save_hidden_cards(self, notebook_slug: str, hidden_cards: Sequence[str]) -> None:
+        with self._lock:
+            hidden_root = self._state.setdefault("hidden_cards", {})
+            if not isinstance(hidden_root, dict):
+                hidden_root = {}
+                self._state["hidden_cards"] = hidden_root
+            hidden_root[str(notebook_slug)] = [
+                str(card_id) for card_id in hidden_cards if str(card_id)]
             self._persist()
 
     def delete_home_note_state(self, note_id: str) -> None:
@@ -1813,6 +1909,93 @@ a:hover {
   box-shadow: 0 12px 28px rgba(73, 51, 30, 0.08);
 }
 
+.home-import-shell,
+.edit-shell {
+  margin: 18px 0 22px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at top right, rgba(45, 212, 191, 0.12), transparent 30%),
+    linear-gradient(180deg, rgba(22, 23, 40, 0.98), rgba(16, 18, 31, 0.98));
+  box-shadow: 0 24px 60px rgba(7, 10, 18, 0.38);
+  color: #f3f4f6;
+}
+
+.home-import-shell .home-collection-head .muted,
+.home-import-shell .lede,
+.home-import-shell .import-status {
+  color: rgba(226, 232, 240, 0.72);
+}
+
+.home-import-shell .card-meta {
+  color: rgba(226, 232, 240, 0.86);
+}
+
+.home-import-shell .button {
+  background: linear-gradient(135deg, #2dd4bf, #0f766e);
+  color: #062b28;
+}
+
+.home-import-shell .button-secondary {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f8fafc;
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.home-import-shell .import-input {
+  background: rgba(12, 16, 28, 0.96);
+  border-color: rgba(255, 255, 255, 0.10);
+  color: #f8fafc;
+}
+
+.home-import-shell .import-input::placeholder {
+  color: rgba(226, 232, 240, 0.52);
+}
+
+.import-grid,
+.edit-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.4fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.edit-input,
+.edit-textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface-solid);
+  color: var(--ink);
+  padding: 12px 14px;
+  font: inherit;
+}
+
+.home-import-shell .import-input {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 16px;
+  background: rgba(12, 16, 28, 0.96);
+  color: #f8fafc;
+  padding: 12px 14px;
+  font: inherit;
+}
+
+.edit-textarea {
+  min-height: 220px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.import-status,
+.edit-status {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
 .home-note-composer {
   display: grid;
   gap: 14px;
@@ -2857,13 +3040,13 @@ function todayStamp() {
 function getBootData() {
   const node = document.getElementById('flashcards-data');
   if (!node) {
-    return { notebooks: [], persistentState: { saved_cards: [], notebooks: {}, notes: {}, home_notes: {} } };
+    return { notebooks: [], persistentState: { saved_cards: [], notebooks: {}, notes: {}, home_notes: {}, imported_notebooks: {}, notebook_edits: {}, card_edits: {}, hidden_cards: {} } };
   }
 
   return safeJsonParse(node.textContent || node.innerText || '{}', {
     notebooks: [],
-    persistentState: { saved_cards: [], notebooks: {}, notes: {}, home_notes: {} },
-  }) || { notebooks: [], persistentState: { saved_cards: [], notebooks: {}, notes: {}, home_notes: {} } };
+    persistentState: { saved_cards: [], notebooks: {}, notes: {}, home_notes: {}, imported_notebooks: {}, notebook_edits: {}, card_edits: {}, hidden_cards: {} },
+  }) || { notebooks: [], persistentState: { saved_cards: [], notebooks: {}, notes: {}, home_notes: {}, imported_notebooks: {}, notebook_edits: {}, card_edits: {}, hidden_cards: {} } };
 }
 
 function getBootPersistentState() {
@@ -2882,6 +3065,22 @@ function getBootPersistentState() {
     home_notes:
       persistentState.home_notes && typeof persistentState.home_notes === 'object'
         ? persistentState.home_notes
+        : {},
+    imported_notebooks:
+      persistentState.imported_notebooks && typeof persistentState.imported_notebooks === 'object'
+        ? persistentState.imported_notebooks
+        : {},
+    notebook_edits:
+      persistentState.notebook_edits && typeof persistentState.notebook_edits === 'object'
+        ? persistentState.notebook_edits
+        : {},
+    card_edits:
+      persistentState.card_edits && typeof persistentState.card_edits === 'object'
+        ? persistentState.card_edits
+        : {},
+    hidden_cards:
+      persistentState.hidden_cards && typeof persistentState.hidden_cards === 'object'
+        ? persistentState.hidden_cards
         : {},
   };
 }
@@ -2921,6 +3120,9 @@ function hydratePersistentStateFromBoot() {
   Object.entries(persistentState.home_notes || {}).forEach(([noteId, noteState]) => {
     localStorage.setItem(getStoreKey(`home-note:${noteId}`), JSON.stringify(noteState));
   });
+  Object.entries(persistentState.hidden_cards || {}).forEach(([slug, cardIds]) => {
+    localStorage.setItem(getStoreKey(`hidden:${slug}`), JSON.stringify(Array.isArray(cardIds) ? cardIds : []));
+  });
 }
 
 async function refreshPersistentStateFromServer() {
@@ -2934,6 +3136,7 @@ async function refreshPersistentStateFromServer() {
   const notebooks = snapshot.notebooks && typeof snapshot.notebooks === 'object' ? snapshot.notebooks : {};
   const notes = snapshot.notes && typeof snapshot.notes === 'object' ? snapshot.notes : {};
   const homeNotes = snapshot.home_notes && typeof snapshot.home_notes === 'object' ? snapshot.home_notes : {};
+  const hiddenCards = snapshot.hidden_cards && typeof snapshot.hidden_cards === 'object' ? snapshot.hidden_cards : {};
 
   const currentSaved = getSavedCards();
   const mergedSaved = mergeSavedCards(currentSaved, savedCards);
@@ -2947,6 +3150,7 @@ async function refreshPersistentStateFromServer() {
       !key.startsWith(getStoreKey('notebook:'))
       && !key.startsWith(getStoreKey('note:'))
       && !key.startsWith(getStoreKey('home-note:'))
+      && !key.startsWith(getStoreKey('hidden:'))
     ) {
       return;
     }
@@ -2965,6 +3169,10 @@ async function refreshPersistentStateFromServer() {
 
   Object.entries(homeNotes).forEach(([noteId, noteState]) => {
     localStorage.setItem(getStoreKey(`home-note:${noteId}`), JSON.stringify(noteState));
+  });
+
+  Object.entries(hiddenCards).forEach(([slug, cardIds]) => {
+    localStorage.setItem(getStoreKey(`hidden:${slug}`), JSON.stringify(Array.isArray(cardIds) ? cardIds : []));
   });
 }
 
@@ -3085,6 +3293,32 @@ function saveHomeNoteState(note) {
 function deleteHomeNoteState(noteId) {
   localStorage.removeItem(getStoreKey(`home-note:${noteId}`));
   syncPersistentState('home_note_delete', { noteId });
+}
+
+function getHiddenCards(notebookSlug) {
+  const raw = localStorage.getItem(getStoreKey(`hidden:${notebookSlug}`));
+  const hidden = safeJsonParse(raw, []);
+  return Array.isArray(hidden) ? hidden.map((entry) => String(entry)) : [];
+}
+
+function saveHiddenCards(notebookSlug, hiddenCards) {
+  const normalized = Array.from(new Set((hiddenCards || []).map((entry) => String(entry)).filter(Boolean)));
+  localStorage.setItem(getStoreKey(`hidden:${notebookSlug}`), JSON.stringify(normalized));
+  syncPersistentState('hidden_cards', { notebookSlug, hiddenCards: normalized });
+  return normalized;
+}
+
+function hideCard(notebookSlug, cardId) {
+  const hidden = getHiddenCards(notebookSlug);
+  const entry = String(cardId);
+  if (!hidden.includes(entry)) {
+    hidden.push(entry);
+  }
+  return saveHiddenCards(notebookSlug, hidden);
+}
+
+function unhideCard(notebookSlug, cardId) {
+  return saveHiddenCards(notebookSlug, getHiddenCards(notebookSlug).filter((entry) => entry !== String(cardId)));
 }
 
 function formatMetricSeconds(value) {
@@ -3348,6 +3582,108 @@ function bindOverviewPage() {
   updateQuestionGrid(notebookSlug);
   renderProgress(notebookRoot, notebookSlug);
   bindSearch();
+
+  document.querySelectorAll('[data-hide-card-button]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const cardId = button.dataset.cardId || '';
+      if (!cardId) {
+        return;
+      }
+      hideCard(notebookSlug, cardId);
+      const tile = button.closest('[data-card-tile]');
+      if (tile) {
+        tile.hidden = true;
+      }
+      window.location.reload();
+    });
+  });
+
+  document.querySelectorAll('[data-unhide-card-button]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const cardId = button.dataset.cardId || '';
+      if (!cardId) {
+        return;
+      }
+      unhideCard(notebookSlug, cardId);
+      window.location.reload();
+    });
+  });
+
+  const notebookEditSave = document.querySelector('[data-notebook-edit-save]');
+  const notebookTitle = document.querySelector('[data-notebook-edit-title]');
+  const notebookDescription = document.querySelector('[data-notebook-edit-description]');
+  const notebookEditStatus = document.querySelector('[data-notebook-edit-status]');
+  if (notebookEditSave) {
+    notebookEditSave.addEventListener('click', async () => {
+      notebookEditSave.disabled = true;
+      if (notebookEditStatus) {
+        notebookEditStatus.textContent = 'Saving...';
+      }
+      try {
+        const response = await fetch('/_api/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'notebook_edit',
+            notebookSlug,
+            title: notebookTitle ? notebookTitle.value : '',
+            description: notebookDescription ? notebookDescription.value : '',
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+          throw new Error(result && result.error ? result.error : 'Save failed.');
+        }
+        if (notebookEditStatus) {
+          notebookEditStatus.textContent = 'Saved. Reloading...';
+        }
+        window.location.reload();
+      } catch (error) {
+        if (notebookEditStatus) {
+          notebookEditStatus.textContent = error && error.message ? error.message : 'Save failed.';
+        }
+      } finally {
+        notebookEditSave.disabled = false;
+      }
+    });
+  }
+
+  const sourceSave = document.querySelector('[data-imported-source-save]');
+  const sourceTextarea = document.querySelector('[data-imported-source]');
+  const sourceStatus = document.querySelector('[data-imported-source-status]');
+  if (sourceSave && sourceTextarea) {
+    sourceSave.addEventListener('click', async () => {
+      sourceSave.disabled = true;
+      if (sourceStatus) {
+        sourceStatus.textContent = 'Saving markdown...';
+      }
+      try {
+        const response = await fetch('/_api/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'imported_notebook_update',
+            notebookSlug,
+            markdown: sourceTextarea.value,
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+          throw new Error(result && result.error ? result.error : 'Save failed.');
+        }
+        if (sourceStatus) {
+          sourceStatus.textContent = 'Saved. Reloading...';
+        }
+        window.location.reload();
+      } catch (error) {
+        if (sourceStatus) {
+          sourceStatus.textContent = error && error.message ? error.message : 'Save failed.';
+        }
+      } finally {
+        sourceSave.disabled = false;
+      }
+    });
+  }
 }
 
 function bindCardPage() {
@@ -3362,6 +3698,11 @@ function bindCardPage() {
   const answerWrap = document.querySelector('[data-answer-wrap]');
   const revealButton = document.querySelector('[data-reveal-button]');
   const saveButton = document.querySelector('[data-save-button]');
+  const hideButton = document.querySelector('[data-card-hide-button]');
+  const editSaveButton = document.querySelector('[data-card-edit-save]');
+  const editTitle = document.querySelector('[data-card-edit-title]');
+  const editBody = document.querySelector('[data-card-edit-body]');
+  const editStatus = document.querySelector('[data-card-edit-status]');
   const randomButton = document.querySelector('[data-random-button]');
 
   const syncSaveButton = () => {
@@ -3411,6 +3752,49 @@ function bindCardPage() {
       saveCardIfNeeded(notebookSlug, cardId);
       syncSaveButton();
       updateQuestionGrid(notebookSlug);
+    });
+  }
+
+  if (hideButton) {
+    hideButton.addEventListener('click', () => {
+      hideCard(notebookSlug, cardId);
+      window.location.href = `/${notebookSlug}/cards`;
+    });
+  }
+
+  if (editSaveButton) {
+    editSaveButton.addEventListener('click', async () => {
+      editSaveButton.disabled = true;
+      if (editStatus) {
+        editStatus.textContent = 'Saving...';
+      }
+      try {
+        const response = await fetch('/_api/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'card_edit',
+            notebookSlug,
+            cardId: String(cardId),
+            title: editTitle ? editTitle.value : '',
+            body: editBody ? editBody.value : '',
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+          throw new Error(result && result.error ? result.error : 'Save failed.');
+        }
+        if (editStatus) {
+          editStatus.textContent = 'Saved. Reloading...';
+        }
+        window.location.reload();
+      } catch (error) {
+        if (editStatus) {
+          editStatus.textContent = error && error.message ? error.message : 'Save failed.';
+        }
+      } finally {
+        editSaveButton.disabled = false;
+      }
     });
   }
 
@@ -4962,6 +5346,15 @@ function fileToDataUrl(file) {
   });
 }
 
+function fileToText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
+    reader.readAsText(file, 'utf-8');
+  });
+}
+
 async function uploadNoteAttachment(notebookSlug, cardId, file) {
   const dataUrl = await fileToDataUrl(file);
   const response = await fetch('/_api/note-attachment', {
@@ -5264,6 +5657,67 @@ function bindHomePage() {
   if (!root) {
     return;
   }
+
+  const fileInput = document.querySelector('[data-import-md-file]');
+  const titleInput = document.querySelector('[data-import-md-title]');
+  const descriptionInput = document.querySelector('[data-import-md-description]');
+  const importButton = document.querySelector('[data-import-md-button]');
+  const status = document.querySelector('[data-import-md-status]');
+
+  const setStatus = (message) => {
+    if (status) {
+      status.textContent = message;
+    }
+  };
+
+  if (fileInput && titleInput) {
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) {
+        return;
+      }
+      if (!titleInput.value.trim()) {
+        titleInput.value = file.name.replace(/\.md$/i, '').replace(/[-_]+/g, ' ');
+      }
+      setStatus(`Selected ${file.name}.`);
+    });
+  }
+
+  if (importButton) {
+    importButton.addEventListener('click', async () => {
+      const file = fileInput && fileInput.files && fileInput.files[0];
+      if (!file) {
+        setStatus('Choose a local .md file first.');
+        return;
+      }
+      importButton.disabled = true;
+      setStatus('Importing markdown...');
+      try {
+        const markdown = await fileToText(file);
+        const response = await fetch('/_api/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'imported_notebook',
+            title: titleInput ? titleInput.value : '',
+            description: descriptionInput ? descriptionInput.value : '',
+            filename: file.name || 'local.md',
+            markdown,
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+          throw new Error(result && result.error ? result.error : 'Import failed.');
+        }
+        setStatus(`Imported ${result.notebookSlug}. Opening...`);
+        window.location.href = `/${result.notebookSlug}/cards`;
+      } catch (error) {
+        setStatus(error && error.message ? error.message : 'Import failed.');
+      } finally {
+        importButton.disabled = false;
+      }
+    });
+  }
 }
 
 function bindSavedPage() {
@@ -5292,7 +5746,7 @@ function bindSavedPage() {
     const entries = getSavedCards();
     const validEntries = entries
       .map((key) => ({ key, pair: cardMap.get(key) }))
-      .filter((entry) => entry.pair);
+      .filter((entry) => entry.pair && !getHiddenCards(entry.pair.notebook.slug).includes(String(entry.pair.card.number)));
 
     if (validEntries.length !== entries.length) {
       saveSavedCards(validEntries.map((entry) => entry.key));
@@ -6013,7 +6467,7 @@ function bindNotesPage() {
     const entries = getSavedCards();
     const validEntries = entries
       .map((key) => ({ key, pair: cardMap.get(key) }))
-      .filter((entry) => entry.pair);
+      .filter((entry) => entry.pair && !getHiddenCards(entry.pair.notebook.slug).includes(String(entry.pair.card.number)));
 
     if (validEntries.length !== entries.length) {
       saveSavedCards(validEntries.map((entry) => entry.key));
@@ -6173,6 +6627,10 @@ def load_notebook(spec: NotebookSpec) -> Notebook:
             f"Notebook source not found: {spec.source_path}")
 
     text = spec.source_path.read_text(encoding="utf-8")
+    return load_notebook_from_text(spec, text)
+
+
+def load_notebook_from_text(spec: NotebookSpec, text: str) -> Notebook:
     cards: List[Card] = []
     matches = list(CARD_HEADING_RE.finditer(text))
 
@@ -6205,6 +6663,156 @@ def load_notebook(spec: NotebookSpec) -> Notebook:
 
     cards.sort(key=lambda card: card.number)
     return Notebook(spec=spec, cards=tuple(cards))
+
+
+def slugify(value: str, fallback: str = "notebook") -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.lower()).strip("-")
+    return slug or fallback
+
+
+def unique_import_slug(base: str, existing_slugs: Sequence[str]) -> str:
+    existing = set(existing_slugs)
+    slug = f"imported-{slugify(base, 'local-md')}"
+    candidate = slug
+    index = 2
+    while candidate in existing:
+        candidate = f"{slug}-{index}"
+        index += 1
+    return candidate
+
+
+def card_body_markdown(card: Card) -> str:
+    blocks = []
+    for section in card.sections:
+        raw = section.raw.strip("\n")
+        if section.title == "内容":
+            blocks.append(raw)
+        else:
+            blocks.append(f"### {section.title}\n\n{raw}")
+    return "\n\n".join(block for block in blocks if block.strip())
+
+
+def apply_persistent_state_to_notebooks(
+    notebooks: Sequence[Notebook],
+    persistent_state: Optional[Dict[str, object]],
+) -> Tuple[Notebook, ...]:
+    state = persistent_state or {}
+    notebook_edits = state.get("notebook_edits", {})
+    card_edits = state.get("card_edits", {})
+    imported_notebooks = state.get("imported_notebooks", {})
+    result: List[Notebook] = []
+
+    for notebook in notebooks:
+        spec = notebook.spec
+        edits = notebook_edits.get(spec.slug, {}) if isinstance(
+            notebook_edits, dict) else {}
+        if isinstance(edits, dict):
+            title = edits.get("title", "")
+            description = edits.get("description", "")
+            if isinstance(title, str) and title.strip():
+                spec = replace(spec, title=title.strip())
+            if isinstance(description, str) and description.strip():
+                spec = replace(spec, description=description.strip())
+
+        notebook_card_edits = card_edits.get(spec.slug, {}) if isinstance(
+            card_edits, dict) else {}
+        cards = []
+        for card in notebook.cards:
+            edit = notebook_card_edits.get(str(card.number), {}) if isinstance(
+                notebook_card_edits, dict) else {}
+            if isinstance(edit, dict) and (edit.get("title") or edit.get("body")):
+                title = edit.get("title", card.title)
+                body = edit.get("body", card_body_markdown(card))
+                if not isinstance(title, str) or not title.strip():
+                    title = card.title
+                if not isinstance(body, str) or not body.strip():
+                    body = card_body_markdown(card)
+                card = replace(
+                    card,
+                    title=title.strip(),
+                    sections=tuple(parse_sections(body)),
+                )
+            cards.append(card)
+        result.append(Notebook(spec=spec, cards=tuple(cards)))
+
+    if isinstance(imported_notebooks, dict):
+        existing_slugs = {notebook.spec.slug for notebook in result}
+        for slug, imported in imported_notebooks.items():
+            if not isinstance(imported, dict):
+                continue
+            markdown = imported.get("markdown", "")
+            if not isinstance(markdown, str) or not markdown.strip():
+                continue
+            title = imported.get("title", "")
+            description = imported.get("description", "")
+            spec = NotebookSpec(
+                slug=str(slug),
+                title=title.strip() if isinstance(
+                    title, str) and title.strip() else str(slug),
+                source_path=DEFAULT_STATE_DIR / "imported" / f"{slug}.md",
+                description=description.strip() if isinstance(
+                    description, str) and description.strip() else "Imported local Markdown flashcards.",
+            )
+            edits = notebook_edits.get(spec.slug, {}) if isinstance(
+                notebook_edits, dict) else {}
+            if isinstance(edits, dict):
+                edited_title = edits.get("title", "")
+                edited_description = edits.get("description", "")
+                if isinstance(edited_title, str) and edited_title.strip():
+                    spec = replace(spec, title=edited_title.strip())
+                if isinstance(edited_description, str) and edited_description.strip():
+                    spec = replace(spec, description=edited_description.strip())
+            try:
+                imported_notebook = load_notebook_from_text(spec, markdown)
+            except Exception:
+                continue
+            notebook_card_edits = card_edits.get(spec.slug, {}) if isinstance(
+                card_edits, dict) else {}
+            if isinstance(notebook_card_edits, dict):
+                edited_cards = []
+                for card in imported_notebook.cards:
+                    edit = notebook_card_edits.get(str(card.number), {})
+                    if isinstance(edit, dict) and (edit.get("title") or edit.get("body")):
+                        edit_title = edit.get("title", card.title)
+                        edit_body = edit.get("body", card_body_markdown(card))
+                        if not isinstance(edit_title, str) or not edit_title.strip():
+                            edit_title = card.title
+                        if not isinstance(edit_body, str) or not edit_body.strip():
+                            edit_body = card_body_markdown(card)
+                        card = replace(
+                            card,
+                            title=edit_title.strip(),
+                            sections=tuple(parse_sections(edit_body)),
+                        )
+                    edited_cards.append(card)
+                imported_notebook = Notebook(
+                    spec=imported_notebook.spec, cards=tuple(edited_cards))
+            if imported_notebook.cards and spec.slug not in existing_slugs:
+                result.append(imported_notebook)
+                existing_slugs.add(spec.slug)
+
+    return tuple(result)
+
+
+def hidden_card_ids(
+    persistent_state: Optional[Dict[str, object]],
+    notebook_slug: str,
+) -> Tuple[str, ...]:
+    hidden_root = (persistent_state or {}).get("hidden_cards", {})
+    if not isinstance(hidden_root, dict):
+        return ()
+    card_ids = hidden_root.get(notebook_slug, [])
+    if not isinstance(card_ids, list):
+        return ()
+    return tuple(str(card_id) for card_id in card_ids)
+
+
+def visible_cards(
+    notebook: Notebook,
+    persistent_state: Optional[Dict[str, object]],
+) -> Tuple[Card, ...]:
+    hidden = set(hidden_card_ids(persistent_state, notebook.spec.slug))
+    return tuple(card for card in notebook.cards if str(card.number) not in hidden)
 
 
 def parse_sections(body: str) -> List[Section]:
@@ -6531,7 +7139,16 @@ def boot_payload(
 ) -> Dict[str, object]:
     return {
         "notebooks": [notebook_payload(notebook) for notebook in notebooks],
-        "persistentState": persistent_state or {"saved_cards": [], "notebooks": {}, "notes": {}, "home_notes": {}},
+        "persistentState": persistent_state or {
+            "saved_cards": [],
+            "notebooks": {},
+            "notes": {},
+            "home_notes": {},
+            "imported_notebooks": {},
+            "notebook_edits": {},
+            "card_edits": {},
+            "hidden_cards": {},
+        },
     }
 
 
@@ -7216,7 +7833,7 @@ def saved_card_entries(
 ) -> Tuple[List[str], List[str]]:
     card_lookup = {}
     for notebook in notebooks:
-        for card in notebook.cards:
+        for card in visible_cards(notebook, persistent_state):
             card_lookup[f"{notebook.spec.slug}:{card.number}"] = (
                 notebook, card)
 
@@ -7441,6 +8058,24 @@ def render_home(notebooks: Sequence[Notebook], persistent_state: Optional[Dict[s
       {render_top_nav(notebooks, "home")}
       <section class="overview-grid">
         {''.join(tiles)}
+      </section>
+      <section class="home-import-shell" aria-label="Import local Markdown">
+        <div class="home-collection-head">
+          <div>
+            <div class="card-meta"><span class="muted">Local Markdown</span></div>
+            <h2 style="margin: 4px 0 0;">导入本地 md 生成 Flashcards</h2>
+            <p class="lede" style="margin-top: 8px;">导入内容只写入本地状态文件，不会新增或修改仓库里的 docs 文档。</p>
+          </div>
+        </div>
+        <div class="import-grid">
+          <input class="import-input" type="file" accept=".md,text/markdown,text/plain" data-import-md-file aria-label="Markdown file">
+          <input class="import-input" type="text" data-import-md-title placeholder="Notebook title">
+          <input class="import-input" type="text" data-import-md-description placeholder="Description shown on the homepage">
+          <div class="reveal-actions">
+            <button class="button" type="button" data-import-md-button>Import md</button>
+            <span class="import-status" data-import-md-status>选择本地 Markdown 文件后导入。</span>
+          </div>
+        </div>
       </section>
     </div>
     """
@@ -7924,9 +8559,9 @@ def render_code_project_page(
     return render_page(f"代码阅读记录 - {project.title}", body, boot_data=boot_payload(notebooks))
 
 
-def render_question_cells(notebook: Notebook) -> str:
+def render_question_cells(notebook: Notebook, persistent_state: Optional[Dict[str, object]] = None) -> str:
     cells = []
-    for card in notebook.cards:
+    for card in visible_cards(notebook, persistent_state):
         search_text = " ".join(
             [card.title, card.preview, " ".join(card.labels)])
         cells.append(
@@ -7947,7 +8582,11 @@ def render_question_cells(notebook: Notebook) -> str:
     return "".join(cells)
 
 
-def render_jump_sidebar(notebook: Notebook, title: str = "Quick jump") -> str:
+def render_jump_sidebar(
+    notebook: Notebook,
+    title: str = "Quick jump",
+    persistent_state: Optional[Dict[str, object]] = None,
+) -> str:
     return f"""
       <aside class="jump-sidebar" aria-label="{html.escape(title, quote=True)}">
         <div class="jump-sidebar-title">{html.escape(title)}</div>
@@ -7960,7 +8599,7 @@ def render_jump_sidebar(notebook: Notebook, title: str = "Quick jump") -> str:
           data-overview-root
           data-notebook-slug="{html.escape(notebook.spec.slug, quote=True)}"
         >
-          {render_question_cells(notebook)}
+          {render_question_cells(notebook, persistent_state)}
         </div>
       </aside>
     """
@@ -7988,6 +8627,7 @@ def render_card_sections(card: Card) -> str:
 
 
 def render_reader_page(notebook: Notebook, persistent_state: Optional[Dict[str, object]] = None) -> str:
+    cards = visible_cards(notebook, persistent_state)
     toc = "".join(
         f"""
         <a href="#topic-{card.number}">
@@ -7995,7 +8635,7 @@ def render_reader_page(notebook: Notebook, persistent_state: Optional[Dict[str, 
           <span class="reader-toc-title">{html.escape(card.title)}</span>
         </a>
         """
-        for card in notebook.cards
+        for card in cards
     )
     articles = "".join(
         f"""
@@ -8010,7 +8650,7 @@ def render_reader_page(notebook: Notebook, persistent_state: Optional[Dict[str, 
           </div>
         </article>
         """
-        for card in notebook.cards
+        for card in cards
     )
     body = f"""
     <div class="app-shell" data-reader-root>
@@ -8030,7 +8670,7 @@ def render_reader_page(notebook: Notebook, persistent_state: Optional[Dict[str, 
           </div>
         </div>
         <div class="hero-card">
-          <div class="stat">{len(notebook.cards)}</div>
+          <div class="stat">{len(cards)}</div>
           <div class="stat-label">topics</div>
         </div>
       </section>
@@ -8050,7 +8690,15 @@ def render_reader_page(notebook: Notebook, persistent_state: Optional[Dict[str, 
 def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, object]] = None) -> str:
     tiles = []
     full_cards = notebook.spec.slug in NOTE_READER_SLUGS
-    for card in notebook.cards:
+    cards = visible_cards(notebook, persistent_state)
+    hidden_cards = [
+        card for card in notebook.cards
+        if str(card.number) in set(hidden_card_ids(persistent_state, notebook.spec.slug))
+    ]
+    imported_root = (persistent_state or {}).get("imported_notebooks", {})
+    imported_state = imported_root.get(notebook.spec.slug, {}) if isinstance(imported_root, dict) else {}
+    imported_markdown = imported_state.get("markdown", "") if isinstance(imported_state, dict) else ""
+    for card in cards:
         search_text = " ".join(
             [card.title, card.preview, " ".join(card.labels)])
         if full_cards:
@@ -8069,6 +8717,7 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
                   <div class="overview-card-body">{render_card_sections(card)}</div>
                   <div class="reveal-actions">
                     <a class="button-secondary" href="{card_url(notebook, card)}">Open card</a>
+                    <button class="button-secondary" type="button" data-hide-card-button data-card-id="{card.number}">Hide</button>
                   </div>
                 </article>
                 """
@@ -8076,11 +8725,10 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
         else:
             tiles.append(
                 f"""
-                <a
+                <article
                   class="card-tile"
                   data-card-tile
                   data-search-text="{html.escape(search_text, quote=True)}"
-                  href="{card_url(notebook, card)}"
                 >
                   <div class="card-meta">
                     <span class="card-number">{card.number:02d}</span>
@@ -8088,7 +8736,11 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
                   </div>
                   <h3>{html.escape(card.title)}</h3>
                   <p class="card-preview">{html.escape(card.preview)}</p>
-                </a>
+                  <div class="reveal-actions">
+                    <a class="button" href="{card_url(notebook, card)}">Open card</a>
+                    <button class="button-secondary" type="button" data-hide-card-button data-card-id="{card.number}">Hide</button>
+                  </div>
+                </article>
                 """
             )
 
@@ -8097,8 +8749,43 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
         if notebook.spec.slug in NOTE_READER_SLUGS
         else ""
     )
+    hidden_html = "".join(
+        f"""
+        <article class="card-tile" data-hidden-card>
+          <div class="card-meta">
+            <span class="card-number">{card.number:02d}</span>
+            <span>hidden</span>
+          </div>
+          <h3>{html.escape(card.title)}</h3>
+          <div class="reveal-actions">
+            <button class="button-secondary" type="button" data-unhide-card-button data-card-id="{card.number}">Unhide</button>
+          </div>
+        </article>
+        """
+        for card in hidden_cards
+    )
+    imported_source_editor = (
+        f"""
+        <section class="edit-shell">
+          <div class="home-collection-head">
+            <div>
+              <div class="card-meta"><span class="muted">Imported source</span></div>
+              <h2 style="margin: 4px 0 0;">Edit generated Markdown</h2>
+              <p class="lede" style="margin-top: 8px;">保存后会重新解析这个导入的 Markdown，不会写入仓库 docs。</p>
+            </div>
+          </div>
+          <textarea class="edit-textarea" data-imported-source spellcheck="false">{html.escape(str(imported_markdown))}</textarea>
+          <div class="reveal-actions note-actions">
+            <button class="button-secondary" type="button" data-imported-source-save>Save generated Markdown</button>
+            <span class="edit-status" data-imported-source-status>Imported notebook source.</span>
+          </div>
+        </section>
+        """
+        if isinstance(imported_markdown, str) and imported_markdown
+        else ""
+    )
     body = f"""
-    <div class="app-shell" data-notebook-root data-total-cards="{len(notebook.cards)}">
+    <div class="app-shell" data-notebook-root data-total-cards="{len(cards)}">
       <div class="breadcrumb">
         <a href="/">Home</a>
         <span> / </span>
@@ -8111,10 +8798,28 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
           <p class="lede">{html.escape(notebook.spec.description)}</p>
         </div>
         <div class="hero-card">
-          <div class="stat">{len(notebook.cards)}</div>
+          <div class="stat">{len(cards)}</div>
           <div class="stat-label">cards in this notebook</div>
         </div>
       </section>
+
+      <section class="edit-shell">
+        <div class="home-collection-head">
+          <div>
+            <div class="card-meta"><span class="muted">Display settings</span></div>
+            <h2 style="margin: 4px 0 0;">Edit notebook display</h2>
+            <p class="lede" style="margin-top: 8px;">只修改本地显示覆盖层，不修改源 Markdown。</p>
+          </div>
+        </div>
+        <div class="edit-grid">
+          <input class="edit-input" type="text" data-notebook-edit-title value="{html.escape(notebook.spec.title, quote=True)}" aria-label="Notebook title">
+          <input class="edit-input" type="text" data-notebook-edit-description value="{html.escape(notebook.spec.description, quote=True)}" aria-label="Notebook description">
+          <button class="button-secondary" type="button" data-notebook-edit-save>Save display</button>
+          <span class="edit-status" data-notebook-edit-status>Notebook display override.</span>
+        </div>
+      </section>
+
+      {imported_source_editor}
 
       <div class="progress-row">
         <div class="progress-track" aria-hidden="true">
@@ -8138,15 +8843,25 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
       <div class="toolbar">
         <a class="button-secondary" href="{random_url(notebook)}">随机抽题</a>
         {reader_link}
-        <span class="muted">当前显示 <strong data-visible-count>{len(notebook.cards)}</strong> 张卡片。</span>
+        <span class="muted">当前显示 <strong data-visible-count>{len(cards)}</strong> 张卡片。</span>
       </div>
 
       <div class="overview-with-jump">
-        {render_jump_sidebar(notebook, "题号导航")}
+        {render_jump_sidebar(notebook, "题号导航", persistent_state)}
         <section class="overview-grid overview-grid-main">
           {''.join(tiles)}
         </section>
       </div>
+
+      <section class="edit-shell" {'hidden' if not hidden_cards else ''}>
+        <div class="home-collection-head">
+          <div>
+            <div class="card-meta"><span class="muted">Hidden cards</span></div>
+            <h2 style="margin: 4px 0 0;">Hidden flashcards</h2>
+          </div>
+        </div>
+        <div class="overview-grid saved-grid">{hidden_html}</div>
+      </section>
 
       <p class="page-footer">答案默认不在总览页展开，点进题目后再显示，减少“看答案”的摩擦。</p>
     </div>
@@ -8155,18 +8870,21 @@ def render_overview(notebook: Notebook, persistent_state: Optional[Dict[str, obj
 
 
 def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[Dict[str, object]] = None) -> str:
-    card_index = card.number - 1
-    previous_card = notebook.cards[card_index - 1] if card_index > 0 else None
-    next_card = notebook.cards[card_index +
-                               1] if card_index + 1 < len(notebook.cards) else None
+    cards = visible_cards(notebook, persistent_state)
+    card_index = next((index for index, item in enumerate(
+        cards) if item.number == card.number), -1)
+    previous_card = cards[card_index - 1] if card_index > 0 else None
+    next_card = cards[card_index + 1] if 0 <= card_index + \
+        1 < len(cards) else None
     playground_data = playground_payload(card)
     playground_data_json = html.escape(json.dumps(
         playground_data, ensure_ascii=False), quote=True)
     answer_sections = render_card_sections(card)
+    editable_body = card_body_markdown(card)
     show_answer_by_default = notebook.spec.slug in NOTE_READER_SLUGS
     answer_hidden_attr = "" if show_answer_by_default else " hidden"
     body = f"""
-    <div class="app-shell" data-notebook-root data-total-cards="{len(notebook.cards)}">
+    <div class="app-shell" data-notebook-root data-total-cards="{len(cards)}">
       <div class="breadcrumb">
         <a href="/">Home</a>
         <span> / </span>
@@ -8183,12 +8901,12 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
         </div>
         <div class="hero-card">
           <div class="stat">{card.number:02d}</div>
-          <div class="stat-label">question {card.number} of {len(notebook.cards)}</div>
+          <div class="stat-label">question {card.number} of {len(cards)}</div>
         </div>
       </section>
 
       <div class="card-with-jump">
-        {render_jump_sidebar(notebook, "题号导航")}
+        {render_jump_sidebar(notebook, "题号导航", persistent_state)}
         <div class="card-workspace">
         <article
           class="panel flashcard card-main"
@@ -8206,6 +8924,7 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
               <button class="button-secondary" type="button" data-save-button>SAVE</button>
               <button class="button-secondary" type="button" data-playground-open>RUN C++</button>
               <button class="button-secondary" type="button" data-note-toggle>My Note</button>
+              <button class="button-secondary" type="button" data-card-hide-button>Hide card</button>
               <a class="button-secondary" href="{overview_url(notebook)}">返回总览</a>
               {
                 '<a class="button-secondary" href="' + flashcards_url(notebook) + '">卡片总览</a>'
@@ -8226,6 +8945,22 @@ def render_card_page(notebook: Notebook, card: Card, persistent_state: Optional[
           <div class="answer-wrap" data-answer-wrap{answer_hidden_attr}>
             {answer_sections}
           </div>
+
+          <section class="edit-shell">
+            <div class="home-collection-head">
+              <div>
+                <div class="card-meta"><span class="muted">Card override</span></div>
+                <h2 style="margin: 4px 0 0;">Edit this flashcard</h2>
+                <p class="lede" style="margin-top: 8px;">保存后只覆盖本地显示，不修改源 Markdown。</p>
+              </div>
+            </div>
+            <input class="edit-input" type="text" data-card-edit-title value="{html.escape(card.title, quote=True)}" aria-label="Card title">
+            <textarea class="edit-textarea" data-card-edit-body spellcheck="false">{html.escape(editable_body)}</textarea>
+            <div class="reveal-actions note-actions">
+              <button class="button-secondary" type="button" data-card-edit-save>Save card display</button>
+              <span class="edit-status" data-card-edit-status>Use ### headings to split sections.</span>
+            </div>
+          </section>
 
           <section
             class="note-panel"
@@ -8388,30 +9123,33 @@ class FlashcardServer(BaseHTTPRequestHandler):
     def handle_request(self, send_body: bool) -> None:
         parsed = urlparse(self.path)
         route = parsed.path.rstrip("/") or "/"
+        state_snapshot = self.state_store.snapshot()
+        notebooks = apply_persistent_state_to_notebooks(
+            self.notebooks, state_snapshot)
 
         if route == "/":
             self.send_html(render_home(
-                self.notebooks, self.state_store.snapshot()), send_body=send_body)
+                notebooks, state_snapshot), send_body=send_body)
             return
 
         if route == "/notes":
             self.send_html(render_notes_page(
-                self.notebooks, self.state_store.snapshot()), send_body=send_body)
+                notebooks, state_snapshot), send_body=send_body)
             return
 
         if route == "/saved":
             self.send_html(render_saved_page(
-                self.notebooks, self.state_store.snapshot()), send_body=send_body)
+                notebooks, state_snapshot), send_body=send_body)
             return
 
         if route == f"/{CPP_LAB_SLUG}":
             self.send_html(render_cpp_lab_page(
-                self.notebooks), send_body=send_body)
+                notebooks), send_body=send_body)
             return
 
         if route == f"/{CODE_READING_SLUG}":
             self.send_html(render_code_reading_overview(
-                self.notebooks, code_projects()), send_body=send_body)
+                notebooks, code_projects()), send_body=send_body)
             return
 
         if route == "/_api/cpp-lab/files":
@@ -8473,7 +9211,7 @@ class FlashcardServer(BaseHTTPRequestHandler):
             projects = code_projects()
             if len(parts) == 1:
                 self.send_html(render_code_reading_overview(
-                    self.notebooks, projects), send_body=send_body)
+                    notebooks, projects), send_body=send_body)
                 return
             if len(parts) == 2:
                 try:
@@ -8482,14 +9220,14 @@ class FlashcardServer(BaseHTTPRequestHandler):
                     self.send_not_found(send_body=send_body)
                     return
                 self.send_html(render_code_project_page(
-                    self.notebooks, projects, project), send_body=send_body)
+                    notebooks, projects, project), send_body=send_body)
                 return
             self.send_not_found(send_body=send_body)
             return
 
         slug = parts[0]
         try:
-            notebook = notebook_by_slug(self.notebooks, slug)
+            notebook = notebook_by_slug(notebooks, slug)
         except KeyError:
             self.send_not_found(send_body=send_body)
             return
@@ -8497,20 +9235,25 @@ class FlashcardServer(BaseHTTPRequestHandler):
         if len(parts) == 1:
             if notebook.spec.slug in NOTE_READER_SLUGS:
                 self.send_html(render_reader_page(
-                    notebook, self.state_store.snapshot()), send_body=send_body)
+                    notebook, state_snapshot), send_body=send_body)
                 return
             self.send_html(render_overview(
-                notebook, self.state_store.snapshot()), send_body=send_body)
+                notebook, state_snapshot), send_body=send_body)
             return
 
         if len(parts) == 2 and parts[1] == "cards":
             self.send_html(render_overview(
-                notebook, self.state_store.snapshot()), send_body=send_body)
+                notebook, state_snapshot), send_body=send_body)
             return
 
         if len(parts) == 2 and parts[1] == "random":
+            cards = visible_cards(notebook, state_snapshot)
+            if not cards:
+                self.send_html(render_overview(
+                    notebook, state_snapshot), send_body=send_body)
+                return
             self.send_redirect(
-                card_url(notebook, random.choice(notebook.cards)))
+                card_url(notebook, random.choice(cards)))
             return
 
         if len(parts) == 2 and parts[1].isdigit():
@@ -8520,7 +9263,7 @@ class FlashcardServer(BaseHTTPRequestHandler):
                 self.send_not_found(send_body=send_body)
                 return
             self.send_html(render_card_page(
-                notebook, card, self.state_store.snapshot()), send_body=send_body)
+                notebook, card, state_snapshot), send_body=send_body)
             return
 
         self.send_not_found(send_body=send_body)
@@ -8828,6 +9571,197 @@ class FlashcardServer(BaseHTTPRequestHandler):
                 self.state_store.state_dir, "home-notes", note_id)
             self.send_json({"ok": True, "noteId": note_id},
                            send_body=send_body)
+            return
+
+        if kind == "imported_notebook":
+            title = payload.get("title", "")
+            description = payload.get("description", "")
+            filename = payload.get("filename", "")
+            markdown = payload.get("markdown", "")
+            if not isinstance(title, str) or not isinstance(description, str) or not isinstance(filename, str) or not isinstance(markdown, str):
+                self.send_json(
+                    {"ok": False, "error": "title, description, filename and markdown must be strings."}, status=400, send_body=send_body)
+                return
+            if not markdown.strip():
+                self.send_json(
+                    {"ok": False, "error": "Markdown file is empty."}, status=400, send_body=send_body)
+                return
+            if len(markdown) > MAX_IMPORTED_MARKDOWN_CHARS:
+                self.send_json(
+                    {"ok": False, "error": "Markdown file is too large."}, status=400, send_body=send_body)
+                return
+            snapshot = self.state_store.snapshot()
+            existing_slugs = [notebook.spec.slug for notebook in self.notebooks]
+            imported_root = snapshot.get("imported_notebooks", {})
+            if isinstance(imported_root, dict):
+                existing_slugs.extend(str(slug) for slug in imported_root)
+            base = title.strip() or Path(filename).stem or "local-md"
+            slug = unique_import_slug(base, existing_slugs)
+            now = datetime.utcnow().isoformat(timespec="seconds")
+            notebook_state = {
+                "slug": slug,
+                "title": title.strip() or Path(filename).stem or "Imported Markdown",
+                "description": description.strip() or f"Imported from {filename or 'local Markdown'}.",
+                "filename": filename,
+                "markdown": markdown,
+                "createdAt": now,
+                "updatedAt": now,
+            }
+            try:
+                parsed_notebook = load_notebook_from_text(
+                    NotebookSpec(
+                        slug=slug,
+                        title=notebook_state["title"],
+                        source_path=DEFAULT_STATE_DIR / "imported" / f"{slug}.md",
+                        description=notebook_state["description"],
+                    ),
+                    markdown,
+                )
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)},
+                               status=400, send_body=send_body)
+                return
+            if not parsed_notebook.cards:
+                self.send_json(
+                    {"ok": False, "error": "No flashcards found. Use '## Title' or '## 1. Title' headings."}, status=400, send_body=send_body)
+                return
+            self.state_store.save_imported_notebook_state(
+                slug, notebook_state)
+            self.send_json(
+                {"ok": True, "notebookSlug": slug, "cards": len(parsed_notebook.cards)}, send_body=send_body)
+            return
+
+        if kind == "imported_notebook_update":
+            notebook_slug = payload.get("notebookSlug", "")
+            markdown = payload.get("markdown", "")
+            if not isinstance(notebook_slug, str) or not notebook_slug:
+                self.send_json(
+                    {"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
+                return
+            if not isinstance(markdown, str):
+                self.send_json(
+                    {"ok": False, "error": "markdown must be a string."}, status=400, send_body=send_body)
+                return
+            if not markdown.strip():
+                self.send_json(
+                    {"ok": False, "error": "Markdown cannot be empty."}, status=400, send_body=send_body)
+                return
+            if len(markdown) > MAX_IMPORTED_MARKDOWN_CHARS:
+                self.send_json(
+                    {"ok": False, "error": "Markdown is too large."}, status=400, send_body=send_body)
+                return
+            snapshot = self.state_store.snapshot()
+            imported_root = snapshot.get("imported_notebooks", {})
+            imported_state = imported_root.get(
+                notebook_slug, {}) if isinstance(imported_root, dict) else {}
+            if not isinstance(imported_state, dict):
+                self.send_json(
+                    {"ok": False, "error": "Imported notebook not found."}, status=404, send_body=send_body)
+                return
+            try:
+                parsed_notebook = load_notebook_from_text(
+                    NotebookSpec(
+                        slug=notebook_slug,
+                        title=str(imported_state.get(
+                            "title", notebook_slug)),
+                        source_path=DEFAULT_STATE_DIR / "imported" / f"{notebook_slug}.md",
+                        description=str(imported_state.get(
+                            "description", "")),
+                    ),
+                    markdown,
+                )
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)},
+                               status=400, send_body=send_body)
+                return
+            if not parsed_notebook.cards:
+                self.send_json(
+                    {"ok": False, "error": "No flashcards found after parsing."}, status=400, send_body=send_body)
+                return
+            updated_state = dict(imported_state)
+            updated_state["markdown"] = markdown
+            updated_state["updatedAt"] = datetime.utcnow().isoformat(
+                timespec="seconds")
+            self.state_store.save_imported_notebook_state(
+                notebook_slug, updated_state)
+            self.send_json(
+                {"ok": True, "notebookSlug": notebook_slug, "cards": len(parsed_notebook.cards)}, send_body=send_body)
+            return
+
+        if kind == "notebook_edit":
+            notebook_slug = payload.get("notebookSlug", "")
+            title = payload.get("title", "")
+            description = payload.get("description", "")
+            if not isinstance(notebook_slug, str) or not notebook_slug:
+                self.send_json(
+                    {"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
+                return
+            if not isinstance(title, str) or not isinstance(description, str):
+                self.send_json(
+                    {"ok": False, "error": "title and description must be strings."}, status=400, send_body=send_body)
+                return
+            self.state_store.save_notebook_edit_state(
+                notebook_slug,
+                {
+                    "title": title,
+                    "description": description,
+                    "updatedAt": datetime.utcnow().isoformat(timespec="seconds"),
+                },
+            )
+            self.send_json(
+                {"ok": True, "notebookSlug": notebook_slug}, send_body=send_body)
+            return
+
+        if kind == "card_edit":
+            notebook_slug = payload.get("notebookSlug", "")
+            card_id = payload.get("cardId", "")
+            title = payload.get("title", "")
+            body = payload.get("body", "")
+            if not isinstance(notebook_slug, str) or not notebook_slug:
+                self.send_json(
+                    {"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
+                return
+            if not isinstance(card_id, str) or not card_id:
+                self.send_json(
+                    {"ok": False, "error": "cardId must be a string."}, status=400, send_body=send_body)
+                return
+            if not isinstance(title, str) or not isinstance(body, str):
+                self.send_json(
+                    {"ok": False, "error": "title and body must be strings."}, status=400, send_body=send_body)
+                return
+            if not title.strip() or not body.strip():
+                self.send_json(
+                    {"ok": False, "error": "title and body cannot be empty."}, status=400, send_body=send_body)
+                return
+            self.state_store.save_card_edit_state(
+                notebook_slug,
+                card_id,
+                {
+                    "title": title,
+                    "body": body,
+                    "updatedAt": datetime.utcnow().isoformat(timespec="seconds"),
+                },
+            )
+            self.send_json(
+                {"ok": True, "notebookSlug": notebook_slug, "cardId": card_id}, send_body=send_body)
+            return
+
+        if kind == "hidden_cards":
+            notebook_slug = payload.get("notebookSlug", "")
+            hidden_cards = payload.get("hiddenCards", [])
+            if not isinstance(notebook_slug, str) or not notebook_slug:
+                self.send_json(
+                    {"ok": False, "error": "notebookSlug must be a string."}, status=400, send_body=send_body)
+                return
+            if not isinstance(hidden_cards, list):
+                self.send_json(
+                    {"ok": False, "error": "hiddenCards must be a list."}, status=400, send_body=send_body)
+                return
+            normalized = [str(card_id)
+                          for card_id in hidden_cards if str(card_id)]
+            self.state_store.save_hidden_cards(notebook_slug, normalized)
+            self.send_json(
+                {"ok": True, "notebookSlug": notebook_slug, "hiddenCards": normalized}, send_body=send_body)
             return
 
         self.send_json({"ok": False, "error": "Unsupported state update kind."},
