@@ -13,22 +13,16 @@
 - [初级篇](./docs/zh/beginner.md)
 - [中级篇](./docs/zh/intermediate.md)
 - [高级篇](./docs/zh/advanced.md)
-- [手写代码题](./docs/zh/coding-round.md)
-- [C++17 / C++20 高频特性](./docs/zh/modern-cpp.md)
-- [STL 容器速查表](./docs/zh/stl-container-cheatsheet.md)
-- [并发专题](./docs/zh/concurrency-deep-dive.md)
-- [项目回答模板](./docs/zh/project-answer-templates.md)
+- [C++ 版本新特性速查](./docs/zh/cpp_news_versions.md)
+- [`std` 标准库学习材料](./docs/zh/std-library.md)
 
 ## 现有结构
 
 - 初级：语法基础、对象模型入门、引用与指针、STL 基础
 - 中级：拷贝控制、移动语义、模板、智能指针、并发基础
 - 高级：完美转发、内存模型、类型萃取、对象切片、现代 C++ 设计
-- 手写代码题：字符串、链表、LRU、线程安全队列
-- 现代 C++：`optional`、`variant`、`string_view`、`span`、`concepts`
-- STL 速查：复杂度、内存布局、迭代器失效、容器选型
-- 并发专题：`mutex`、`atomic`、条件变量、线程池、`future`、内存序
-- 项目回答模板：把八股题连接到真实项目表达
+- C++ 版本新特性速查：按 C++11 到 C++23 梳理语言与库特性
+- `std` 标准库学习材料：容器、算法、字符串、视图、时间、文件系统、并发工具
 
 ## 备注
 
@@ -56,50 +50,51 @@ python3 tools/flashcards_app.py
 
 注意：如果你用的是局域网 `http://<ip>:8000`，iOS 仍然可以添加到主屏幕，但真正的 service worker 缓存和更完整的 PWA 体验通常需要 `HTTPS` 或 `localhost`。如果你需要离线/更完整的 app 体验，建议再套一层 HTTPS 反代。
 
-## Docker 部署
+## 启动方式
 
-仓库里已经补了可同时支持 `x86_64/amd64` 和 `arm64` 的容器配置。
-容器会把浏览记录和收藏状态写到 `./data/flashcards-state.json`，通过 bind mount 保存在容器外。
+### 本地部署
 
-### 本地构建
-
-```bash
-docker build -t cpp-interview-lab:latest .
-```
-
-### x86 电脑
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.x86.yml up --build
-```
-
-### Raspberry Pi 5
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.arm.yml up --build
-```
-
-然后打开 `http://127.0.0.1:8000/`。
-
-如果你要推送多架构镜像，可以用 `buildx`：
-
-```bash
-docker buildx build --platform linux/amd64,linux/arm64 -t your-name/cpp-interview-lab:latest --push .
-```
-
-如果你想在容器里直接读本地改动，可以额外加一个 bind mount：
-
-```bash
-docker run --rm -p 8000:8000 -u "$(id -u):$(id -g)" -v "$PWD":/app -v "$PWD/data":/data cpp-interview-lab:latest
-```
-
-### 快速启动
+本地有两种入口：
 
 ```bash
 make server
-make docker-up-lan
-make docker-up-x86
-make docker-up-arm
+make docker-up
 ```
 
-`make docker-up-lan` 会根据机器架构自动选择 `amd64` 或 `arm64` 配置，并通过 `0.0.0.0:8000` 对局域网开放访问。
+`make server` 直接在宿主机启动，默认绑定 `0.0.0.0:8000`。
+`make docker-up` 会根据本机架构自动选择 `amd64` 或 `arm64` 的 compose 覆盖文件。
+如果需要停止容器或看日志，可以继续用：
+
+```bash
+make docker-down
+make docker-logs
+```
+
+### 远端单机部署
+
+远端单机部署继续走 Docker Compose，但命令统一成通用的 `remote-*` 入口：
+
+```bash
+make remote-sync REMOTE_HOST=<host>
+make remote-run REMOTE_HOST=<host>
+make remote-tmux REMOTE_HOST=<host>
+make remote-install-autostart REMOTE_HOST=<host>
+```
+
+默认会同步到远端用户家目录下的 `flashcards/`，远端容器状态仍然写到远端的 `data/` 目录。
+如果远端主机端口不是 `8000`，可以通过 `HOST_PORT` 或 `REMOTE_PORT` 覆盖。
+
+### 远端 Kubernetes 部署
+
+仓库里新增了 `k8s/` 下的最小清单，包含 `Namespace`、`PersistentVolumeClaim`、`Deployment` 和 `NodePort Service`。
+
+```bash
+make k8s-build K8S_IMAGE=<registry>/cpp-interview-lab:latest
+make k8s-push K8S_IMAGE=<registry>/cpp-interview-lab:latest
+make k8s-deploy K8S_NAMESPACE=flashcards K8S_IMAGE=<registry>/cpp-interview-lab:latest
+make k8s-logs K8S_NAMESPACE=flashcards
+make k8s-port-forward K8S_NAMESPACE=flashcards
+```
+
+如果集群架构和本机不一致，可以额外指定 `K8S_PLATFORM=linux/amd64` 或 `linux/arm64`。
+部署后默认通过 `http://<node-ip>:30080/` 访问，也可以用 `make k8s-port-forward` 本地转发到 `http://127.0.0.1:8000/`。

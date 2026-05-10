@@ -14,12 +14,8 @@
 - [初级篇](./beginner.md)
 - [中级篇](./intermediate.md)
 - [高级篇](./advanced.md)
-- [手写代码题](./coding-round.md)
-- [C++ Code Examples：知识点代码库](./code-examples.md)
-- [C++17 / C++20 高频特性](./modern-cpp.md)
-- [STL 容器速查表](./stl-container-cheatsheet.md)
-- [并发专题](./concurrency-deep-dive.md)
-- [项目回答模板](./project-answer-templates.md)
+- [C++ 版本新特性速查](./cpp_news_versions.md)
+- [`std` 标准库学习材料](./std-library.md)
 
 ## 建议使用方式
 
@@ -28,6 +24,8 @@
 1. 先看初级篇，确保基础概念说得准
 2. 再看中级篇，补齐工程实践和现代 C++ 能力
 3. 最后看高级篇，用于回答深入追问和区分度问题
+4. 再看 `C++` 版本新特性速查，补齐按标准版本梳理的知识
+5. 最后用 `std` 标准库学习材料做容器、算法和常用工具的专项复习
 
 ## 推荐学习路径
 

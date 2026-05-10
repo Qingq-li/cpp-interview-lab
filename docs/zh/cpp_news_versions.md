@@ -12,6 +12,20 @@
 | C++20 | 大版本升级 | concepts、ranges、coroutines、modules、`span`、`jthread`、三路比较 |
 | C++23 | 补齐现代库体验 | `expected`、`print`、`mdspan`、deducing this、ranges 增强、flat containers |
 
+## 版本示例怎么跑
+
+下面这些示例都按单文件思路写，直接保存成 `demo.cpp` 即可编译：
+
+```bash
+g++ -std=c++11 demo.cpp -O2 -Wall -Wextra -pedantic -o demo
+g++ -std=c++14 demo.cpp -O2 -Wall -Wextra -pedantic -o demo
+g++ -std=c++17 demo.cpp -O2 -Wall -Wextra -pedantic -o demo
+g++ -std=c++20 demo.cpp -O2 -Wall -Wextra -pedantic -o demo
+g++ -std=c++23 demo.cpp -O2 -Wall -Wextra -pedantic -o demo
+```
+
+如果你在老工具链上编译 `filesystem`、`expected`、`print`、`generator` 这类库特性，可能需要更高版本的编译器或标准库实现。
+
 ---
 
 # C++11
@@ -1077,3 +1091,201 @@ Flat containers provide associative-container interfaces over contiguous sorted 
 ### 面试怎么说
 
 我会在数据天然是流式、可能很大或生成成本高时考虑 generator；如果数据规模小且需要随机访问，直接容器更简单。
+
+---
+
+## 45. 版本示例：直接编译运行
+
+这一节把前面的版本特性串成几个能直接跑的小程序。你可以把它当成“版本-语法-运行结果”对照表。
+
+### C++11 综合示例
+
+```cpp
+// g++ -std=c++11 demo.cpp -O2 -Wall -Wextra -pedantic -o demo
+#include <iostream>
+#include <memory>
+#include <string>
+#include <vector>
+
+enum class Level {
+    Info,
+    Warn
+};
+
+struct Logger {
+    void log(Level level, const std::string& msg) const {
+        std::cout << (level == Level::Info ? "INFO" : "WARN") << ": " << msg << '\n';
+    }
+};
+
+int main() {
+    std::vector<std::string> messages = {"hello", "cpp11"};
+    Logger logger;
+    auto print = [&](const std::string& text) { logger.log(Level::Info, text); };
+
+    std::unique_ptr<int> counter(new int(0));
+    for (const auto& msg : messages) {
+        print(msg);
+        ++*counter;
+    }
+
+    if (counter != nullptr) {
+        std::cout << "count = " << *counter << '\n';
+    }
+}
+```
+
+### C++14 综合示例
+
+```cpp
+// g++ -std=c++14 demo.cpp -O2 -Wall -Wextra -pedantic -o demo
+#include <iostream>
+#include <memory>
+#include <type_traits>
+#include <vector>
+
+constexpr int sum_to(int n) {
+    int result = 0;
+    for (int i = 1; i <= n; ++i) {
+        result += i;
+    }
+    return result;
+}
+
+auto make_worker() {
+    return std::make_unique<int>(42);
+}
+
+int main() {
+    auto add = [](const auto& a, const auto& b) {
+        return a + b;
+    };
+
+    std::vector<int> values{1, 2, 3};
+    auto worker = make_worker();
+    auto total = add(sum_to(static_cast<int>(values.size())), *worker);
+
+    std::cout << "total = " << total << '\n';
+    std::cout << "is int = " << std::is_same<decltype(total), int>::value << '\n';
+}
+```
+
+### C++17 综合示例
+
+```cpp
+// g++ -std=c++17 demo.cpp -O2 -Wall -Wextra -pedantic -o demo
+#include <iostream>
+#include <map>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <type_traits>
+
+template <typename T>
+void print_value(const T& value) {
+    if constexpr (std::is_integral_v<T>) {
+        std::cout << "integral: " << value << '\n';
+    } else {
+        std::cout << value << '\n';
+    }
+}
+
+int main() {
+    std::map<std::string, int> scores{{"Ada", 99}, {"Bjarne", 100}};
+
+    if (auto it = scores.find("Ada"); it != scores.end()) {
+        auto [name, score] = *it;
+        std::cout << name << " -> " << score << '\n';
+    }
+
+    std::optional<int> port = 8080;
+    std::string_view label = "cpp17";
+    print_value(*port);
+    print_value(label);
+}
+```
+
+### C++20 综合示例
+
+```cpp
+// g++ -std=c++20 demo.cpp -O2 -Wall -Wextra -pedantic -o demo
+#include <algorithm>
+#include <concepts>
+#include <iostream>
+#include <ranges>
+#include <span>
+#include <vector>
+
+template <std::integral T>
+T add(T a, T b) {
+    return a + b;
+}
+
+int main() {
+    std::vector<int> values{5, 1, 3, 2, 4};
+    std::ranges::sort(values);
+
+    std::span<int> view(values);
+    std::cout << "add = " << add(2, 3) << '\n';
+
+    for (int x : view | std::views::take(3)) {
+        std::cout << x << ' ';
+    }
+    std::cout << '\n';
+}
+```
+
+### C++23 综合示例
+
+```cpp
+// g++ -std=c++23 demo.cpp -O2 -Wall -Wextra -pedantic -o demo
+#include <charconv>
+#include <iostream>
+#include <string>
+#include <string_view>
+
+#if __has_include(<expected>)
+#include <expected>
+#endif
+
+#if __has_include(<print>)
+#include <print>
+#endif
+
+#if defined(__cpp_lib_expected)
+std::expected<int, std::string> parse_id(std::string_view text) {
+    int value = 0;
+    auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (ec != std::errc{} || ptr != text.data() + text.size()) {
+        return std::unexpected("invalid id");
+    }
+    return value;
+}
+#endif
+
+int main() {
+#if defined(__cpp_lib_expected)
+    if (auto id = parse_id("123"); id) {
+        std::cout << "id = " << *id << '\n';
+    } else {
+        std::cout << id.error() << '\n';
+    }
+#else
+    std::cout << "std::expected is not available in this toolchain\n";
+#endif
+
+#if defined(__cpp_lib_print)
+    std::print("done\n");
+#else
+    std::cout << "done\n";
+#endif
+}
+```
+
+### 代码讲解
+
+- C++11 示例把 `auto`、lambda、`unique_ptr`、`enum class` 和 `nullptr` 串起来
+- C++14 示例展示了泛型 lambda、返回类型推导、放宽后的 `constexpr` 和 `make_unique`
+- C++17 示例把结构化绑定、`if` 初始化语句、`if constexpr`、`optional`、`string_view` 放到同一个场景里
+- C++20 示例展示了 concepts、ranges 和 `span`
+- C++23 示例演示 `expected` 和 `print`，并用特性宏做兼容降级

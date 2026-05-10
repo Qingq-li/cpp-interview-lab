@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: __K8S_APP__
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: __K8S_APP__
+  template:
+    metadata:
+      labels:
+        app: __K8S_APP__
+    spec:
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: __K8S_CONTAINER__
+          image: __K8S_IMAGE__
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+          ports:
+            - containerPort: 8000
+          env:
+            - name: FLASHCARDS_STATE_DIR
+              value: /data
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: __K8S_APP__-data
